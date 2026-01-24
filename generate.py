@@ -9,7 +9,7 @@ from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 import argparse
 
-STREAMER_JOIN_TIMEOUT_SECONDS = 1.0
+STREAMER_JOIN_TIMEOUT_SECONDS = 1.0  # Small timeout to avoid hanging on shutdown.
 
 
 class AsyncTokenStreamer:
@@ -35,7 +35,10 @@ class AsyncTokenStreamer:
         self.queue.put(self.stop_signal)
         self.thread.join(timeout=STREAMER_JOIN_TIMEOUT_SECONDS)
         if self.thread.is_alive():
-            print("Warning: token streamer thread did not exit cleanly.")
+            print(
+                "Warning: token streamer thread did not exit cleanly within timeout. "
+                "This may indicate a threading issue."
+            )
 
 
 def generate(
