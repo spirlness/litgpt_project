@@ -1,10 +1,56 @@
 import torch
 from pathlib import Path
 import sys
+import time
 import yaml
+import threading
+import queue
 from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 import argparse
+
+STREAMER_JOIN_TIMEOUT_SECONDS = (
+    1.0  # Short timeout to avoid hanging; enough time to flush the token queue.
+)
+
+
+class AsyncTokenStreamer:
+    def __init__(self):
+        self.queue = queue.Queue()
+        self.stop_signal = object()
+        self.output_failed = False
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+
+    def _worker(self):
+        while True:
+            token = self.queue.get()
+            if token is self.stop_signal:
+                self.queue.task_done()
+                break
+            if not self.output_failed:
+                try:
+                    print(token, end="", flush=True)
+                except (BrokenPipeError, UnicodeEncodeError) as exc:
+                    print(
+                        f"Warning: token streamer output failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    self.output_failed = True
+            self.queue.task_done()
+
+    def put(self, token):
+        self.queue.put(token)
+
+    def close(self):
+        self.queue.put(self.stop_signal)
+        self.thread.join(timeout=STREAMER_JOIN_TIMEOUT_SECONDS)
+        if self.thread.is_alive():
+            print(
+                "Warning: token streamer thread did not exit cleanly within timeout. "
+                "This may indicate a threading issue.",
+                file=sys.stderr,
+            )
 
 
 def generate(
@@ -36,6 +82,10 @@ def generate(
     with open(config_path, "r", encoding="utf-8") as f:
         full_config = yaml.safe_load(f)
         model_config_dict = full_config.get("model_config", {})
+
+    # Fix for YAML loading 1e-5 as string
+    if "norm_eps" in model_config_dict:
+        model_config_dict["norm_eps"] = float(model_config_dict["norm_eps"])
 
     config = Config(**model_config_dict)
 
@@ -77,8 +127,12 @@ def generate(
 
     print("\nGenerating...")
     print("-" * 50)
-    print(prompt, end="", flush=True)
 
+    streamer = AsyncTokenStreamer()
+    streamer.put(prompt)
+
+    t0 = time.perf_counter()
+    generated_tokens = 0
     for i in range(max_new_tokens):
         if encoded.size(0) > config.block_size:
             idx_cond = encoded[-config.block_size :]
@@ -98,11 +152,18 @@ def generate(
         idx_next = torch.multinomial(probs, num_samples=1)
 
         token_str = tokenizer.decode(idx_next)
-        print(token_str, end="", flush=True)
+        streamer.put(token_str)
 
         encoded = torch.cat((encoded, idx_next))
+        generated_tokens += 1
 
+    t1 = time.perf_counter()
+    streamer.close()
     print("\n" + "-" * 50)
+    elapsed = t1 - t0
+    print(f"\nTime for {generated_tokens} tokens: {elapsed:.2f} s")
+    if elapsed > 0:
+        print(f"Tokens per second: {generated_tokens / elapsed:.2f}")
 
 
 if __name__ == "__main__":

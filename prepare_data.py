@@ -7,6 +7,13 @@ import tarfile
 import gzip
 import shutil
 
+
+def _ensure_data_directories(data_path: Path) -> None:
+    data_path.mkdir(parents=True, exist_ok=True)
+    (data_path / "train").mkdir(parents=True, exist_ok=True)
+    (data_path / "val").mkdir(parents=True, exist_ok=True)
+
+
 # Set environment variables for data processing
 os.environ["DATA_OPTIMIZER_GLOBAL_RANK"] = "0"
 os.environ["DATA_OPTIMIZER_NUM_WORKERS"] = str(os.cpu_count() or 1)
@@ -67,7 +74,7 @@ if __name__ == "__main__":
 
     # Initialize TextFiles data module
     data_path = Path("data/custom_text")
-    # data_path.mkdir(parents=True, exist_ok=True) # Already created
+    _ensure_data_directories(data_path)
     data_module = TextFiles(
         train_data_path=data_path / "train",
         val_data_path=data_path / "val",
