@@ -1,10 +1,36 @@
 import torch
 from pathlib import Path
 import sys
+import time
 import yaml
+import threading
+import queue
 from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 import argparse
+
+
+class AsyncTokenStreamer:
+    def __init__(self):
+        self.queue = queue.Queue()
+        self.stop_signal = object()
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+
+    def _worker(self):
+        while True:
+            token = self.queue.get()
+            if token is self.stop_signal:
+                break
+            print(token, end="", flush=True)
+            self.queue.task_done()
+
+    def put(self, token):
+        self.queue.put(token)
+
+    def close(self):
+        self.queue.put(self.stop_signal)
+        self.thread.join()
 
 
 def generate(
@@ -36,6 +62,10 @@ def generate(
     with open(config_path, "r", encoding="utf-8") as f:
         full_config = yaml.safe_load(f)
         model_config_dict = full_config.get("model_config", {})
+
+    # Fix for YAML loading 1e-5 as string
+    if "norm_eps" in model_config_dict:
+        model_config_dict["norm_eps"] = float(model_config_dict["norm_eps"])
 
     config = Config(**model_config_dict)
 
@@ -77,9 +107,14 @@ def generate(
 
     print("\nGenerating...")
     print("-" * 50)
-    print(prompt, end="", flush=True)
 
+    streamer = AsyncTokenStreamer()
+    streamer.put(prompt)
+
+    t0 = time.perf_counter()
+    generated_tokens = 0
     for i in range(max_new_tokens):
+        generated_tokens += 1
         if encoded.size(0) > config.block_size:
             idx_cond = encoded[-config.block_size :]
         else:
@@ -98,11 +133,15 @@ def generate(
         idx_next = torch.multinomial(probs, num_samples=1)
 
         token_str = tokenizer.decode(idx_next)
-        print(token_str, end="", flush=True)
+        streamer.put(token_str)
 
         encoded = torch.cat((encoded, idx_next))
 
+    t1 = time.perf_counter()
+    streamer.close()
     print("\n" + "-" * 50)
+    print(f"\nTime for {generated_tokens} tokens: {t1 - t0:.2f} s")
+    print(f"Tokens per second: {generated_tokens / (t1 - t0):.2f}")
 
 
 if __name__ == "__main__":
