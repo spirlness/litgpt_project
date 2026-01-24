@@ -23,6 +23,7 @@ class AsyncTokenStreamer:
         while True:
             token = self.queue.get()
             if token is self.stop_signal:
+                self.queue.task_done()
                 break
             print(token, end="", flush=True)
             self.queue.task_done()
