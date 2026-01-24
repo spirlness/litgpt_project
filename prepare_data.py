@@ -9,7 +9,7 @@ import shutil
 
 # Set environment variables for data processing
 os.environ["DATA_OPTIMIZER_GLOBAL_RANK"] = "0"
-os.environ["DATA_OPTIMIZER_NUM_WORKERS"] = "1"
+os.environ["DATA_OPTIMIZER_NUM_WORKERS"] = str(os.cpu_count() or 1)
 
 if __name__ == "__main__":
     # Load model config
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     data_module = TextFiles(
         train_data_path=data_path / "train",
         val_data_path=data_path / "val",
-        num_workers=1,
+        num_workers=os.cpu_count() or 1,
     )
 
     # Connect with tokenizer and batch size
@@ -86,6 +86,6 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("Data preparation complete!")
 
-    print(f"Training data: {data_module.data_path_train}")
-    print(f"Validation data: {data_module.data_path_val}")
+    print(f"Training data: {data_module.out_path_train}")
+    print(f"Validation data: {data_module.out_path_val}")
     print("=" * 60)
