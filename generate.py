@@ -9,7 +9,9 @@ from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 import argparse
 
-STREAMER_JOIN_TIMEOUT_SECONDS = 1.0  # Small timeout to avoid hanging on shutdown.
+STREAMER_JOIN_TIMEOUT_SECONDS = (
+    1.0  # Short timeout to avoid hanging; enough for the queue to drain on shutdown.
+)
 
 
 class AsyncTokenStreamer:
@@ -25,7 +27,11 @@ class AsyncTokenStreamer:
             if token is self.stop_signal:
                 self.queue.task_done()
                 break
-            print(token, end="", flush=True)
+            try:
+                print(token, end="", flush=True)
+            except Exception:
+                self.queue.task_done()
+                break
             self.queue.task_done()
 
     def put(self, token):
