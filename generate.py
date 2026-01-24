@@ -29,7 +29,8 @@ class AsyncTokenStreamer:
                 break
             try:
                 print(token, end="", flush=True)
-            except Exception:
+            except (BrokenPipeError, UnicodeEncodeError) as exc:
+                print(f"Warning: token streamer output failed: {exc}")
                 self.queue.task_done()
                 break
             self.queue.task_done()
