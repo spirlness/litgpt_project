@@ -1,0 +1,17 @@
+bias: false
+block_size: 1024
+mlp_class_name: LLaMAMoE
+moe_intermediate_size: 512
+n_embd: 256
+n_expert: 4
+n_expert_per_token: 2
+n_head: 4
+n_layer: 4
+n_query_groups: 4
+name: MoE-30M-Debug
+norm_class_name: RMSNorm
+norm_eps: 1e-5
+padded_vocab_size: 50257
+parallel_residual: false
+rope_base: 10000
+vocab_size: 50257

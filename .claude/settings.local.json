@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(braingrid init:*)",
+      "Bash(npx @braingrid/cli init:*)",
+      "Bash(powershell -Command \"braingrid requirement list -p PROJ-1\")",
+      "Bash(powershell -Command \"braingrid requirement breakdown REQ-1 -p PROJ-1\")",
+      "Bash(powershell -Command \"git checkout -b feature/REQ-1-moe-llm-training\")",
+      "Bash(powershell -Command:*)",
+      "Bash(pip install:*)",
+      "Bash(conda activate:*)",
+      "Bash(python:*)",
+      "Bash(G:/anaconda/envs/litgpt/python.exe:*)",
+      "Bash(G:/anaconda/envs/lsitgpt/python.exe:*)"
+    ]
+  }
+}

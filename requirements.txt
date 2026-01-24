@@ -1,0 +1,8 @@
+litgpt
+lightning
+torch
+pyyaml
+requests
+wandb
+tokenizers
+datasets
