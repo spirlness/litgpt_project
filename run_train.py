@@ -35,14 +35,6 @@ if __name__ == "__main__":
     # Then it tried to use that as a model.
     # The correct mock should be:
 
-    _orig_compile = torch.compile
-
-    def _mock_compile(model, *args, **kwargs):
-        # Return the original model unmodified
-        return model
-
-    torch.compile = _mock_compile
-
     sys.argv = ["litgpt", "pretrain", "--config", "litgpt_config_200m.yaml"]
 
     main()
