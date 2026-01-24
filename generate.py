@@ -9,6 +9,8 @@ from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 import argparse
 
+STREAMER_JOIN_TIMEOUT_SECONDS = 1.0
+
 
 class AsyncTokenStreamer:
     def __init__(self):
@@ -21,7 +23,6 @@ class AsyncTokenStreamer:
         while True:
             token = self.queue.get()
             if token is self.stop_signal:
-                self.queue.task_done()
                 break
             print(token, end="", flush=True)
             self.queue.task_done()
@@ -31,7 +32,7 @@ class AsyncTokenStreamer:
 
     def close(self):
         self.queue.put(self.stop_signal)
-        self.thread.join(timeout=1)
+        self.thread.join(timeout=STREAMER_JOIN_TIMEOUT_SECONDS)
 
 
 def generate(
@@ -115,7 +116,6 @@ def generate(
     t0 = time.perf_counter()
     generated_tokens = 0
     for i in range(max_new_tokens):
-        generated_tokens += 1
         if encoded.size(0) > config.block_size:
             idx_cond = encoded[-config.block_size :]
         else:
@@ -137,6 +137,7 @@ def generate(
         streamer.put(token_str)
 
         encoded = torch.cat((encoded, idx_next))
+        generated_tokens += 1
 
     t1 = time.perf_counter()
     streamer.close()
