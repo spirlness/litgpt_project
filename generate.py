@@ -21,6 +21,7 @@ class AsyncTokenStreamer:
         while True:
             token = self.queue.get()
             if token is self.stop_signal:
+                self.queue.task_done()
                 break
             print(token, end="", flush=True)
             self.queue.task_done()
@@ -30,7 +31,7 @@ class AsyncTokenStreamer:
 
     def close(self):
         self.queue.put(self.stop_signal)
-        self.thread.join()
+        self.thread.join(timeout=1)
 
 
 def generate(
@@ -140,8 +141,10 @@ def generate(
     t1 = time.perf_counter()
     streamer.close()
     print("\n" + "-" * 50)
-    print(f"\nTime for {generated_tokens} tokens: {t1 - t0:.2f} s")
-    print(f"Tokens per second: {generated_tokens / (t1 - t0):.2f}")
+    elapsed = t1 - t0
+    print(f"\nTime for {generated_tokens} tokens: {elapsed:.2f} s")
+    if elapsed > 0:
+        print(f"Tokens per second: {generated_tokens / elapsed:.2f}")
 
 
 if __name__ == "__main__":
