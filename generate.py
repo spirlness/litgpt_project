@@ -34,6 +34,8 @@ class AsyncTokenStreamer:
     def close(self):
         self.queue.put(self.stop_signal)
         self.thread.join(timeout=STREAMER_JOIN_TIMEOUT_SECONDS)
+        if self.thread.is_alive():
+            print("Warning: token streamer thread did not exit cleanly.")
 
 
 def generate(
