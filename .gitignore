@@ -46,3 +46,11 @@ wandb/
 # LitGPT
 out/
 lightning_logs/
+
+.braingrid/
+
+.claude/
+
+.sisyphus/
+
+CLAUDE.md
