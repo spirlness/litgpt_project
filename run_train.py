@@ -1,5 +1,8 @@
 import sys
 import torch
+import argparse
+from litgpt.__main__ import main
+import os
 
 # Fix for MoE meta-device FLOP counting
 try:
@@ -10,39 +13,33 @@ try:
 except ImportError:
     print("Could not import torch.fx.experimental._config")
 
-from litgpt.__main__ import main
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run LitGPT training with MoE support")
+    parser.add_argument("--config", type=str, default="litgpt_config_200m.yaml", help="Path to config file")
+    parser.add_argument("--compile", type=str, default="false", choices=["true", "false", "True", "False"], help="Enable or disable torch.compile (default: false)")
+
+    args, unknown = parser.parse_known_args()
+    return args, unknown
 
 if __name__ == "__main__":
-    # Fake argv to call pretrain
-    # The main() in litgpt uses sys.argv logic or CLI.
-    # litgpt main entry point expects "litgpt" as prog name maybe?
-    # We will simulate the command line arguments
-    # Disable torch.compile which seems to cause issues on this env with MoE
-    # by using --compile=False if supported or env var?
-    # LitGPT uses lightning fabric.
-    import os
-    # Disable Triton cache to avoid weird file path issues on Windows?
-    # Or just completely disable compile.
-    # LitGPT might be forcing compile=True internally for some models?
-    # Actually, try setting arguments directly to disable compile if possible.
+    args, rest = parse_args()
 
-    # Force disable compile at a lower level
-    import torch
-    # torch.compile = lambda *args, **kwargs: (lambda x: x) # This replaces torch.compile with a dummy function.
-    # But wait, LitGPT might expect an object that behaves like a model if it calls compile(model).
-    # The error "AttributeError: 'function' object has no attribute 'named_parameters'"
-    # suggests LitGPT called torch.compile(model), and got back our dummy lambda x:x.
-    # Then it tried to use that as a model.
-    # The correct mock should be:
+    use_compile = args.compile.lower() == "true"
 
-    _orig_compile = torch.compile
+    if not use_compile:
+        print("Disabling torch.compile...")
+        _orig_compile = torch.compile
 
-    def _mock_compile(model, *args, **kwargs):
-        # Return the original model unmodified
-        return model
+        def _mock_compile(model, *args, **kwargs):
+            # Return the original model unmodified
+            return model
 
-    torch.compile = _mock_compile
+        torch.compile = _mock_compile
+    else:
+        print("Enabling torch.compile...")
 
-    sys.argv = ["litgpt", "pretrain", "--config", "litgpt_config_200m.yaml"]
+    # Construct sys.argv for litgpt
+    # litgpt pretrain --config <config> [rest]
+    sys.argv = ["litgpt", "pretrain", "--config", args.config] + rest
 
     main()
