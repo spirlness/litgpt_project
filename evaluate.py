@@ -6,6 +6,22 @@ import time
 from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 import numpy as np
+from torch.utils.data import DataLoader, Dataset, RandomSampler
+
+
+class TextDataset(Dataset):
+    def __init__(self, data, block_size):
+        self.data = data
+        self.block_size = block_size
+
+    def __len__(self):
+        return len(self.data) - self.block_size
+
+    def __getitem__(self, idx):
+        chunk = self.data[idx : idx + self.block_size + 1].astype(np.int64)
+        x = torch.from_numpy(chunk[:-1])
+        y = torch.from_numpy(chunk[1:])
+        return x, y
 
 
 def evaluate(
@@ -69,23 +85,25 @@ def evaluate(
     losses = []
 
     print("Starting evaluation...")
+
+    num_workers = 4
+    if "data" in full_config and "init_args" in full_config["data"]:
+        num_workers = full_config["data"]["init_args"].get("num_workers", 4)
+
+    dataset = TextDataset(data, block_size)
+    sampler = RandomSampler(dataset, replacement=True, num_samples=max_batches * batch_size)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        num_workers=num_workers,
+        pin_memory=(device != "cpu")
+    )
+
     with torch.no_grad():
-        for i in range(max_batches):
-            ix = torch.randint(len(data) - block_size, (batch_size,))
-            x = torch.stack(
-                [
-                    torch.from_numpy((data[i : i + block_size]).astype(np.int64))
-                    for i in ix
-                ]
-            )
-            y = torch.stack(
-                [
-                    torch.from_numpy(
-                        (data[i + 1 : i + 1 + block_size]).astype(np.int64)
-                    )
-                    for i in ix
-                ]
-            )
+        for i, (x, y) in enumerate(dataloader):
+            if i >= max_batches:
+                break
 
             x, y = x.to(device), y.to(device)
 
