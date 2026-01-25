@@ -53,29 +53,6 @@ class AsyncTokenStreamer:
             )
 
 
-class AsyncTokenStreamer:
-    def __init__(self):
-        self.queue = queue.Queue()
-        self.stop_signal = object()
-        self.thread = threading.Thread(target=self._worker, daemon=True)
-        self.thread.start()
-
-    def _worker(self):
-        while True:
-            token = self.queue.get()
-            if token is self.stop_signal:
-                break
-            print(token, end="", flush=True)
-            self.queue.task_done()
-
-    def put(self, token):
-        self.queue.put(token)
-
-    def close(self):
-        self.queue.put(self.stop_signal)
-        self.thread.join()
-
-
 def generate(
     checkpoint_dir: Path = Path("checkpoints"),
     prompt: str = "Once upon a time",
@@ -157,7 +134,6 @@ def generate(
     t0 = time.perf_counter()
     generated_tokens = 0
     for i in range(max_new_tokens):
-        generated_tokens += 1
         if encoded.size(0) > config.block_size:
             idx_cond = encoded[-config.block_size :]
         else:
