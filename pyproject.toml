@@ -19,6 +19,7 @@ dependencies = [
     "safetensors",
     "sentencepiece",
     "bitsandbytes",
+    "litdata>=0.2.59",
 ]
 
 [[tool.uv.index]]
