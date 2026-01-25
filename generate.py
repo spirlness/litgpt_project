@@ -9,6 +9,49 @@ from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 import argparse
 
+STREAMER_JOIN_TIMEOUT_SECONDS = (
+    1.0  # Short timeout to avoid hanging; enough time to flush the token queue.
+)
+
+
+class AsyncTokenStreamer:
+    def __init__(self):
+        self.queue = queue.Queue()
+        self.stop_signal = object()
+        self.output_failed = False
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+
+    def _worker(self):
+        while True:
+            token = self.queue.get()
+            if token is self.stop_signal:
+                self.queue.task_done()
+                break
+            if not self.output_failed:
+                try:
+                    print(token, end="", flush=True)
+                except (BrokenPipeError, UnicodeEncodeError) as exc:
+                    print(
+                        f"Warning: token streamer output failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    self.output_failed = True
+            self.queue.task_done()
+
+    def put(self, token):
+        self.queue.put(token)
+
+    def close(self):
+        self.queue.put(self.stop_signal)
+        self.thread.join(timeout=STREAMER_JOIN_TIMEOUT_SECONDS)
+        if self.thread.is_alive():
+            print(
+                "Warning: token streamer thread did not exit cleanly within timeout. "
+                "This may indicate a threading issue.",
+                file=sys.stderr,
+            )
+
 
 class AsyncTokenStreamer:
     def __init__(self):
@@ -136,12 +179,15 @@ def generate(
         streamer.put(token_str)
 
         encoded = torch.cat((encoded, idx_next))
+        generated_tokens += 1
 
     t1 = time.perf_counter()
     streamer.close()
     print("\n" + "-" * 50)
-    print(f"\nTime for {generated_tokens} tokens: {t1 - t0:.2f} s")
-    print(f"Tokens per second: {generated_tokens / (t1 - t0):.2f}")
+    elapsed = t1 - t0
+    print(f"\nTime for {generated_tokens} tokens: {elapsed:.2f} s")
+    if elapsed > 0:
+        print(f"Tokens per second: {generated_tokens / elapsed:.2f}")
 
 
 if __name__ == "__main__":
