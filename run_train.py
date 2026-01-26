@@ -202,6 +202,13 @@ if __name__ == "__main__":
         default=True,
         help="Show a progress bar (reads tokens from CSV logger)",
     )
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable torch.compile (default: False). Use --compile to enable.",
+    )
+
     # Parse our custom flags.
     # Note: LitGPT internally saves hyperparameters by parsing sys.argv via jsonargparse.
     # We'll set a LitGPT-compatible argv (including the required positional `model_name`) right before calling setup().
@@ -216,13 +223,24 @@ if __name__ == "__main__":
         else:
             resume = Path(value)
 
-    # Mock torch.compile to avoid issues on Windows
-    _orig_compile = torch.compile
+    # Conditionally mock torch.compile
+    if not args.compile:
+        # Mock torch.compile to avoid issues on Windows or if explicitly disabled
+        def _mock_compile(model, *args, **kwargs):
+            return model
+        torch.compile = _mock_compile
+        print("Disabled torch.compile (mocked).")
+    else:
+        print("Enabled torch.compile.")
 
-    def _mock_compile(model, *args, **kwargs):
-        return model
-
-    torch.compile = _mock_compile
+    # Use FixedLLaMAMoE to improve compatibility with torch.compile
+    try:
+        from custom_moe import FixedLLaMAMoE
+        import litgpt.model
+        litgpt.model.LLaMAMoE = FixedLLaMAMoE
+        print("Patched litgpt.model.LLaMAMoE with FixedLLaMAMoE")
+    except ImportError:
+        print("Warning: Could not import FixedLLaMAMoE, using default LLaMAMoE")
 
     # Create MoE Config
     model_config = Config(
