@@ -6,7 +6,7 @@ A Mixture of Experts (MoE) language model training project using Lightning LitGP
 
 This project implements a custom 200M parameter Mixture of Experts (MoE) language model using:
 - **LitGPT 0.5.11** - Lightning AI's GPT training framework
-- **PyTorch 2.6.0+cu124** - Deep learning framework
+- **PyTorch 2.10.0+cu128** - Deep learning framework
 - **Lightning 2.6.0** - Training orchestration
 - **MoE Architecture** - 8 experts with 2 active experts per token
 
@@ -65,8 +65,8 @@ litgpt_project/
 ## Installation
 
 ### Prerequisites
-- Python 3.12+
-- CUDA 12.4 compatible GPU
+- Python 3.12–3.13
+- CUDA 12.8 compatible GPU
 - NVIDIA RTX 3060 Laptop GPU (or similar)
 
 ### Setup with uv
@@ -79,6 +79,38 @@ uv run python -c "import litgpt; print('litgpt installed')"
 uv run python -c "import torch; print(f'torch: {torch.__version__}')"
 ```
 
+### Log dataset to W&B (Artifact)
+
+After running data preparation, you can upload the dataset directory (raw text + tokenized chunks) to Weights & Biases as a **dataset Artifact**.
+
+```bash
+# Required: set your target W&B project
+$env:WANDB_PROJECT="your-project"
+
+# Optional: team/entity
+$env:WANDB_ENTITY="your-entity"
+
+# Enable dataset upload
+$env:WANDB_LOG_DATASET="1"
+
+# Prepare data and upload as an Artifact
+uv run python prepare_data.py --log-to-wandb --wandb-artifact dataset-custom_text
+```
+
+If the dataset is already prepared and you only want to upload it (without re-tokenizing), run:
+
+```bash
+$env:WANDB_PROJECT="your-project"
+uv run python wandb_dataset.py --data-dir data/custom_text --wandb-artifact dataset-custom_text
+```
+
+If you want to test without network access, set offline mode:
+
+```bash
+$env:WANDB_MODE="offline"
+uv run python prepare_data.py --log-to-wandb --wandb-artifact dataset-custom_text
+```
+
 ## Usage
 
 ### Training
@@ -87,6 +119,35 @@ uv run python -c "import torch; print(f'torch: {torch.__version__}')"
 ```bash
 uv run python run_train.py
 ```
+
+#### Resume training (checkpoint)
+
+```bash
+# Auto-resume from latest checkpoint in ./checkpoints
+uv run python run_train.py --resume auto
+
+# Resume from a specific checkpoint directory
+uv run python run_train.py --resume checkpoints/step-00000010
+```
+
+#### Progress bar
+
+The training script can show a progress bar based on `total_tokens` written by the CSV logger.
+
+```bash
+uv run python run_train.py --progress
+```
+
+#### Train using a W&B dataset Artifact
+
+If you uploaded the dataset with [wandb_dataset.py](wandb_dataset.py), you can point training to the Artifact and it will be downloaded automatically.
+
+```bash
+$env:WANDB_ENTITY="your-entity"  # required if you use project/name:alias form
+uv run python run_train.py --wandb-dataset your-entity/your-project/dataset-custom_text:latest
+```
+
+Artifacts will be cached under `./data/wandb_artifacts` by default (override with `--wandb-artifacts-dir`).
 
 #### Training Configuration
 
@@ -104,11 +165,11 @@ data:
     num_workers: 2
 
 train:
-  global_batch_size: 16
+  global_batch_size: 8
   log_interval: 1
   max_tokens: 320000
   lr_warmup_steps: 5
-  micro_batch_size: 2
+  micro_batch_size: 1
   save_interval: 10
 
 logger_name: csv
@@ -264,8 +325,18 @@ tokenizer.save_pretrained('./data/tokenizer')
 #### 4. CUDA Out of Memory
 **Error**: `CUDA out of memory`
 **Fixes**:
-- Reduce `micro_batchser_size` in `train_config.yaml`
-- Reduce `global_batchser_size`
+- Set allocator config to reduce fragmentation (PowerShell):
+```bash
+$env:PYTORCH_ALLOC_CONF="expandable_segments:True"
+```
+- Reduce `micro_batch_size` / `global_batch_size` (6GB GPU suggested):
+```bash
+uv run python run_train.py --micro-batch-size 1 --global-batch-size 8
+```
+- Reduce sequence length (often the biggest VRAM lever):
+```bash
+uv run python run_train.py --max-seq-length 1024
+```
 - Reduce `n_layer` or `n_embd` in `model_config.yaml`
 
 #### 5. Build System Errors
@@ -277,8 +348,8 @@ tokenizer.save_pretrained('./data/tokenizer')
 ### Current Settings
 | Parameter | Value | Rationale |
 |-----------|---------|------------|
-| `micro_batch_size` | 2 | Fits in ~8GB VRAM |
-| `global_batch_size` | 16 | 8 gradient accumulation steps |
+| `micro_batch_size` | 1 | Fits in ~6GB VRAM |
+| `global_batch_size` | 8 | Lower effective batch for 6GB GPUs |
 | `learning_rate` | 0.0003 | Standard for MoE |
 | `weight_decay` | 0.01 | Regularization |
 | `lr_warmup_steps` | 5 | Minimal warmup |
@@ -317,7 +388,7 @@ ls checkpoints/
 ## Dependencies
 
 ### Core Dependencies (from `pyproject.toml`)
-- `torch >= 2.6.0` (CUDA 12.4)
+- `torch >= 2.10.0` (CUDA 12.8 / cu128)
 - `litgpt >= 0.5.11`
 - `lightning >= 2.6.0`
 - `transformers >= 4.57.6`

@@ -10,11 +10,11 @@ data:
     num_workers: 2
 
 train:
-  global_batch_size: 16
+  global_batch_size: 8
   log_interval: 1
   max_tokens: 320000
   lr_warmup_steps: 5
-  micro_batch_size: 2
+  micro_batch_size: 1
   save_interval: 10
 
 logger_name: csv
