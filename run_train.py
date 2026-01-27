@@ -206,7 +206,7 @@ if __name__ == "__main__":
         "--compile",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Enable torch.compile (default: False). Use --compile to enable.",
+        help="Enable torch.compile (default: False). FixedLLaMAMoE is used to ensure compatibility.",
     )
 
     # Parse our custom flags.
@@ -223,16 +223,6 @@ if __name__ == "__main__":
         else:
             resume = Path(value)
 
-    # Conditionally mock torch.compile
-    if not args.compile:
-        # Mock torch.compile to avoid issues on Windows or if explicitly disabled
-        def _mock_compile(model, *args, **kwargs):
-            return model
-        torch.compile = _mock_compile
-        print("Disabled torch.compile (mocked).")
-    else:
-        print("Enabled torch.compile.")
-
     # Use FixedLLaMAMoE to improve compatibility with torch.compile
     try:
         from custom_moe import FixedLLaMAMoE
@@ -241,6 +231,23 @@ if __name__ == "__main__":
         print("Patched litgpt.model.LLaMAMoE with FixedLLaMAMoE")
     except ImportError:
         print("Warning: Could not import FixedLLaMAMoE, using default LLaMAMoE")
+
+    class TorchCompileMocker:
+        def __init__(self, enable_mock):
+            self.enable_mock = enable_mock
+            self.original_compile = torch.compile
+
+        def __enter__(self):
+            if self.enable_mock:
+                def _mock_compile(model, *args, **kwargs):
+                    return model
+                torch.compile = _mock_compile
+                print("Disabled torch.compile (mocked). Pass --compile to enable.")
+            else:
+                print("Enabled torch.compile.")
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            torch.compile = self.original_compile
 
     # Create MoE Config
     model_config = Config(
@@ -330,18 +337,19 @@ if __name__ == "__main__":
 
     try:
         # Run pretrain
-        setup(
-            model_name='MoE-200M',
-            model_config=model_config,
-            out_dir=Path('./checkpoints'),
-            precision='bf16-mixed',
-            tokenizer_dir=Path('./data/tokenizer'),
-            data=data_module,
-            train=train,
-            logger_name='csv',
-            optimizer={'class_path': 'torch.optim.AdamW', 'init_args': {'lr': 0.0003, 'weight_decay': 0.01}},
-            resume=resume,
-        )
+        with TorchCompileMocker(enable_mock=not args.compile):
+            setup(
+                model_name='MoE-200M',
+                model_config=model_config,
+                out_dir=Path('./checkpoints'),
+                precision='bf16-mixed',
+                tokenizer_dir=Path('./data/tokenizer'),
+                data=data_module,
+                train=train,
+                logger_name='csv',
+                optimizer={'class_path': 'torch.optim.AdamW', 'init_args': {'lr': 0.0003, 'weight_decay': 0.01}},
+                resume=resume,
+            )
     finally:
         stop.set()
         if monitor_thread is not None:
