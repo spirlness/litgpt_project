@@ -205,8 +205,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--compile",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable torch.compile (default: False). Use --compile to enable.",
+        default=True,
+        help="Enable torch.compile (default: True). Use --no-compile to disable.",
     )
 
     # Parse our custom flags.
@@ -231,6 +231,7 @@ if __name__ == "__main__":
         torch.compile = _mock_compile
         print("Disabled torch.compile (mocked).")
     else:
+        # Enabled by default as FixedLLaMAMoE resolves compatibility issues
         print("Enabled torch.compile.")
 
     # Use FixedLLaMAMoE to improve compatibility with torch.compile
