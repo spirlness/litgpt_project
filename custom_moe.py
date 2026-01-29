@@ -93,16 +93,15 @@ class FixedLLaMAMoE(nn.Module):
             token_indices = mask.nonzero(as_tuple=True)[0]
             expert_assignments = mask.nonzero(as_tuple=True)[1]
 
-            # Only process if there are tokens assigned to this expert
-            if token_indices.numel() > 0:
-                expert_input = x[token_indices]
-                expert_output = self.experts[expert_idx](expert_input)
+            # Process even if no tokens are assigned (for torch.compile compatibility)
+            expert_input = x[token_indices]
+            expert_output = self.experts[expert_idx](expert_input)
 
-                # Get probabilities for these tokens
-                token_probs = probs[token_indices, expert_assignments]
+            # Get probabilities for these tokens
+            token_probs = probs[token_indices, expert_assignments]
 
-                # Add weighted expert output to final result
-                y[token_indices] += token_probs.unsqueeze(-1) * expert_output
+            # Add weighted expert output to final result
+            y[token_indices] += token_probs.unsqueeze(-1) * expert_output
 
         # Reshape back to (B, T, C)
         y = y.view(B, T, C)
@@ -174,14 +173,13 @@ class SimplifiedLLaMAMoE(nn.Module):
                 mask = expert_idx_for_each_token == expert_id
                 token_indices = mask.nonzero(as_tuple=True)[0]
 
-                if token_indices.numel() > 0:
-                    # Get inputs for tokens using this expert
-                    expert_input = x_flat[expert_input]  # typo: should be x_flat[token_indices]
-                    expert_output = self.experts[expert_id](expert_input)
+                # Get inputs for tokens using this expert
+                expert_input = x_flat[token_indices]
+                expert_output = self.experts[expert_id](expert_input)
 
-                    # Get probabilities and accumulate
-                    token_probs = prob_for_each_token[token_indices]
-                    y[token_indices] += token_probs * expert_output
+                # Get probabilities and accumulate
+                token_probs = prob_for_each_token[token_indices]
+                y[token_indices] += token_probs * expert_output
 
         y = y.view(B, T, C)
 
@@ -251,16 +249,16 @@ class BatchedMoE(nn.Module):
 
             # Only process tokens with non-zero weight
             mask = weights > 0
-            if mask.any():
-                # Get tokens and weights
-                expert_input = x_flat[mask]
-                expert_weights = weights[mask]
 
-                # Compute expert output
-                expert_output = self.experts[expert_idx](expert_input)
+            # Get tokens and weights
+            expert_input = x_flat[mask]
+            expert_weights = weights[mask]
 
-                # Accumulate weighted outputs
-                y[mask] += expert_weights.unsqueeze(-1) * expert_output
+            # Compute expert output
+            expert_output = self.experts[expert_idx](expert_input)
+
+            # Accumulate weighted outputs
+            y[mask] += expert_weights.unsqueeze(-1) * expert_output
 
         y = y.view(B, T, C)
 

@@ -231,6 +231,7 @@ if __name__ == "__main__":
         torch.compile = _mock_compile
         print("Disabled torch.compile (mocked).")
     else:
+        # FixedLLaMAMoE is now compatible with torch.compile
         print("Enabled torch.compile.")
 
     # Use FixedLLaMAMoE to improve compatibility with torch.compile
@@ -238,7 +239,7 @@ if __name__ == "__main__":
         from custom_moe import FixedLLaMAMoE
         import litgpt.model
         litgpt.model.LLaMAMoE = FixedLLaMAMoE
-        print("Patched litgpt.model.LLaMAMoE with FixedLLaMAMoE")
+        print("Patched litgpt.model.LLaMAMoE with FixedLLaMAMoE (torch.compile compatible)")
     except ImportError:
         print("Warning: Could not import FixedLLaMAMoE, using default LLaMAMoE")
 
