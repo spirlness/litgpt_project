@@ -67,17 +67,30 @@ def generate(
 
     print(f"Using device: {device}")
 
-    config_path = checkpoint_dir / "litgpt_config.yaml"
-    if not config_path.exists():
-        config_path = Path("litgpt_config.yaml")
+    model_config_path = None
+    candidates = [
+        checkpoint_dir / "final" / "model_config.yaml",
+        checkpoint_dir / "model_config.yaml",
+        Path("model_config.yaml"),
+    ]
+    step_configs = sorted(checkpoint_dir.glob("step-*/model_config.yaml"))
+    if step_configs:
+        candidates.insert(1, step_configs[-1])
 
-    if not config_path.exists():
-        print(f"Error: Config not found at {config_path}. Run create_litgpt_config.py first.")
+    for path in candidates:
+        if path.exists():
+            model_config_path = path
+            break
+
+    if model_config_path is None:
+        print(f"Error: model_config.yaml not found under {checkpoint_dir} (or project root).")
         return
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        full_config = yaml.safe_load(f)
-        model_config_dict = full_config.get("model_config", {})
+    with open(model_config_path, "r", encoding="utf-8") as f:
+        loaded = yaml.safe_load(f) or {}
+
+    # Back-compat: some configs are nested under 'model_config'
+    model_config_dict = loaded.get("model_config", loaded)
 
     # Fix for YAML loading 1e-5 as string
     if "norm_eps" in model_config_dict:

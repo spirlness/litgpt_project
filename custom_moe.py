@@ -27,8 +27,13 @@ class FixedLLaMAMoE(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
 
+        # litgpt.Config has changed across versions; keep defaults compatible.
+        self.n_expert_groups = int(getattr(config, "n_expert_groups", 0) or 0)
+        self.n_shared_expert = int(getattr(config, "n_shared_expert", 0) or 0)
+        self.routed_scaling_factor = float(getattr(config, "routed_scaling_factor", 1.0) or 1.0)
+
         # Gate for routing (can be simple Linear or GroupedTopkRouter)
-        if not config.n_expert_groups:
+        if not self.n_expert_groups:
             self.gate = nn.Linear(config.n_embd, config.n_expert, bias=False)
         else:
             # Import GroupedTopkRouter from litgpt.model
@@ -42,10 +47,10 @@ class FixedLLaMAMoE(nn.Module):
         )
 
         # Optional shared experts
-        if config.n_shared_expert:
+        if self.n_shared_expert:
             self.shared_experts = LLaMAMLP(
                 config,
-                intermediate_size=config.moe_intermediate_size * config.n_shared_expert,
+                intermediate_size=config.moe_intermediate_size * self.n_shared_expert,
             )
 
         self.config = config
@@ -65,7 +70,7 @@ class FixedLLaMAMoE(nn.Module):
         x = x.view(-1, C)  # (B*T, C)
 
         # Get routing decisions
-        if not self.config.n_expert_groups:
+        if not self.n_expert_groups:
             router = self.gate(x)  # (B*T, n_expert)
             probs, indices = torch.topk(router, self.config.n_expert_per_token)
             probs = probs.softmax(dim=1, dtype=torch.float).to(dtype=x.dtype)
@@ -73,8 +78,8 @@ class FixedLLaMAMoE(nn.Module):
             probs, indices = self.gate(x)
 
         # Apply routing scaling factor if configured
-        if self.config.routed_scaling_factor != 1.0:
-            probs = probs * self.config.routed_scaling_factor
+        if self.routed_scaling_factor != 1.0:
+            probs = probs * self.routed_scaling_factor
 
         # Create expert assignment masks
         # Shape: (B*T, n_expert_per_token)
@@ -108,7 +113,7 @@ class FixedLLaMAMoE(nn.Module):
         y = y.view(B, T, C)
 
         # Add shared expert outputs if configured
-        if self.config.n_shared_expert:
+        if self.n_shared_expert:
             y = y + self.shared_experts(residual_x)
 
         return y

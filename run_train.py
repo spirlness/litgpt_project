@@ -27,6 +27,20 @@ except (ImportError, AttributeError) as e:
 # Patch measure_flops to skip for MoE models
 import lightning.fabric.utilities.throughput as throughput_module
 
+# Patch Lightning checkpoint saving to avoid buffering multi-GB checkpoints in memory.
+# The default Fabric TorchCheckpointIO uses an in-memory BytesIO for atomic saves, which can
+# raise MemoryError on large models. For local training, streaming directly to disk is fine.
+try:
+    import lightning.fabric.plugins.io.torch_io as torch_io_module
+
+    def _non_atomic_save(checkpoint, path) -> None:  # type: ignore[no-redef]
+        torch.save(checkpoint, path)
+
+    torch_io_module._atomic_save = _non_atomic_save  # type: ignore[attr-defined]
+    print("Patched Lightning _atomic_save to stream to disk.")
+except Exception as e:  # noqa: BLE001
+    print(f"Could not patch Lightning _atomic_save: {e}")
+
 _orig_measure_flops = throughput_module.measure_flops
 
 
@@ -226,6 +240,7 @@ if __name__ == "__main__":
         # Mock torch.compile to avoid issues on Windows or if explicitly disabled
         def _mock_compile(model, *args, **kwargs):
             return model
+
         torch.compile = _mock_compile
         print("Disabled torch.compile (mocked).")
     else:
@@ -235,6 +250,7 @@ if __name__ == "__main__":
     try:
         from custom_moe import FixedLLaMAMoE
         import litgpt.model
+
         litgpt.model.LLaMAMoE = FixedLLaMAMoE
         print("Patched litgpt.model.LLaMAMoE with FixedLLaMAMoE")
     except ImportError:
