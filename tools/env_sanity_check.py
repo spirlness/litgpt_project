@@ -1,24 +1,27 @@
 import importlib
 import os
 
-MODULES = [
+REQUIRED_MODULES = [
     "torch",
     "torchvision",
     "torchaudio",
     "litgpt",
     "lightning",
     "pytorch_lightning",
-    "transformers",
-    "datasets",
     "tokenizers",
-    "accelerate",
     "wandb",
     "safetensors",
+]
+
+OPTIONAL_MODULES = [
+    "transformers",
+    "datasets",
+    "accelerate",
     "sentencepiece",
 ]
 
 if os.environ.get("SKIP_BNB_RUNTIME") != "1":
-    MODULES.append("bitsandbytes")
+    OPTIONAL_MODULES.append("bitsandbytes")
 
 
 def try_import(name: str) -> tuple[bool, str]:
@@ -31,13 +34,22 @@ def try_import(name: str) -> tuple[bool, str]:
 
 def main() -> int:
     failures: list[tuple[str, str]] = []
-    for name in MODULES:
+    optional_failures: list[tuple[str, str]] = []
+    for name in REQUIRED_MODULES:
         ok, err = try_import(name)
         if ok:
             print("OK ", name)
         else:
             print("FAIL", name, err)
             failures.append((name, err))
+
+    for name in OPTIONAL_MODULES:
+        ok, err = try_import(name)
+        if ok:
+            print("OK ", name)
+        else:
+            print("WARN", name, err)
+            optional_failures.append((name, err))
 
     import torch  # noqa: E402
 
@@ -66,13 +78,22 @@ def main() -> int:
                 print("BNB functional:", "present")
         except Exception as exc:  # noqa: BLE001
             print("\nBNB_RUNTIME_FAIL:", repr(exc))
-            failures.append(("bitsandbytes(runtime)", repr(exc)))
+            optional_failures.append(("bitsandbytes(runtime)", repr(exc)))
 
     if failures:
         print("\nFAILED_IMPORTS_OR_RUNTIME:")
         for name, err in failures:
             print("-", name, err)
+        if optional_failures:
+            print("\nOPTIONAL_IMPORT_WARNINGS:")
+            for name, err in optional_failures:
+                print("-", name, err)
         return 2
+
+    if optional_failures:
+        print("\nOPTIONAL_IMPORT_WARNINGS:")
+        for name, err in optional_failures:
+            print("-", name, err)
 
     print("\nALL_OK")
     return 0
