@@ -44,14 +44,15 @@ This project implements a custom 200M parameter Mixture of Experts (MoE) languag
 ```
 litgpt_project/
 ├── run_train.py              # Main training script
-├── custom_moe.py             # Custom MoE implementation (if used)
-├── main.py                  # Alternative entry point
+├── src/
+│   └── custom_moe.py             # Custom MoE implementation (if used)
+├── docs/
+│   └── AGENTS.md                 # Agent documentation
 ├── prepare_data.py            # Data preprocessing
 ├── generate.py               # Text generation script
 ├── evaluate.py               # Model evaluation script
 ├── model_config.yaml          # Model architecture configuration
 ├── train_config.yaml          # Training hyperparameters
-├── litgpt_config_200m.yaml  # Legacy config (deprecated)
 ├── pyproject.toml             # Project dependencies (uv)
 ├── uv.lock                   # Locked dependencies
 ├── data/

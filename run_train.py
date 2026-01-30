@@ -15,6 +15,9 @@ from pathlib import Path
 
 from tqdm import tqdm
 
+# Enable Tensor Cores for float32 matrix multiplications
+torch.set_float32_matmul_precision("high")
+
 # Fix for MoE meta-device FLOP counting
 try:
     import torch.fx.experimental._config as fx_config
@@ -56,7 +59,7 @@ throughput_module.measure_flops = _measure_flops_patch
 
 from litgpt.config import Config
 from litgpt.pretrain import setup
-from litgpt.args import TrainArgs
+from litgpt.args import TrainArgs, LogArgs
 from litgpt.data import TextFiles
 
 
@@ -221,6 +224,44 @@ if __name__ == "__main__":
         help="Enable torch.compile (default: False). Use --compile to enable.",
     )
 
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default=os.environ.get("WANDB_PROJECT"),
+        help="W&B project name for logging",
+    )
+    parser.add_argument(
+        "--wandb-entity",
+        type=str,
+        default=os.environ.get("WANDB_ENTITY"),
+        help="Optional W&B entity/team",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        type=str,
+        default=os.environ.get("WANDB_RUN_NAME"),
+        help="Optional W&B run name",
+    )
+    parser.add_argument(
+        "--wandb-tags",
+        type=str,
+        default=os.environ.get("WANDB_TAGS"),
+        help="Comma-separated run tags for W&B",
+    )
+    parser.add_argument(
+        "--wandb-notes",
+        type=str,
+        default=os.environ.get("WANDB_NOTES"),
+        help="Notes for W&B run",
+    )
+    parser.add_argument(
+        "--logger",
+        type=str,
+        default=os.environ.get("LOGGER", "csv"),
+        choices=["csv", "wandb", "tensorboard"],
+        help="Logger backend: csv (default), wandb, or tensorboard",
+    )
+
     # Parse our custom flags.
     # Note: LitGPT internally saves hyperparameters by parsing sys.argv via jsonargparse.
     # We'll set a LitGPT-compatible argv (including the required positional `model_name`) right before calling setup().
@@ -248,7 +289,7 @@ if __name__ == "__main__":
 
     # Use FixedLLaMAMoE to improve compatibility with torch.compile
     try:
-        from custom_moe import FixedLLaMAMoE
+        from src.custom_moe import FixedLLaMAMoE
         import litgpt.model
 
         litgpt.model.LLaMAMoE = FixedLLaMAMoE
@@ -312,7 +353,7 @@ if __name__ == "__main__":
         sys.argv[0],
         "MoE-200M",
         "--logger_name",
-        "csv",
+        args.logger,
         "--precision",
         "bf16-mixed",
         "--out_dir",
@@ -342,6 +383,15 @@ if __name__ == "__main__":
             stop=stop,
         )
 
+    log_args = LogArgs() if args.logger != "wandb" else None
+    if args.logger == "wandb":
+        if not args.wandb_project:
+            raise ValueError("W&B logging requires --wandb-project or WANDB_PROJECT env var")
+        log_args = LogArgs(
+            project=args.wandb_project,
+            run=args.wandb_run_name,
+        )
+
     try:
         # Run pretrain
         setup(
@@ -352,7 +402,8 @@ if __name__ == "__main__":
             tokenizer_dir=Path("./data/tokenizer"),
             data=data_module,
             train=train,
-            logger_name="csv",
+            logger_name=args.logger,
+            log=log_args,
             optimizer={"class_path": "torch.optim.AdamW", "init_args": {"lr": 0.0003, "weight_decay": 0.01}},
             resume=resume,
         )

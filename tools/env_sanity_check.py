@@ -78,7 +78,18 @@ def main() -> int:
                 print("BNB functional:", "present")
         except Exception as exc:  # noqa: BLE001
             print("\nBNB_RUNTIME_FAIL:", repr(exc))
-            optional_failures.append(("bitsandbytes(runtime)", repr(exc)))
+            # On Windows without CUDA, bitsandbytes might fail to load libs.
+            # Treat as warning if CUDA is not available.
+            try:
+                import torch
+                cuda_available = torch.cuda.is_available()
+            except ImportError:
+                cuda_available = False
+
+            if cuda_available:
+                failures.append(("bitsandbytes(runtime)", repr(exc)))
+            else:
+                 optional_failures.append(("bitsandbytes(runtime)", repr(exc)))
 
     if failures:
         print("\nFAILED_IMPORTS_OR_RUNTIME:")
