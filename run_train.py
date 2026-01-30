@@ -4,6 +4,8 @@ import argparse
 import threading
 import time
 from typing import Optional
+from unittest.mock import patch
+from contextlib import nullcontext
 
 # Helps reduce CUDA allocator fragmentation (must be set before importing torch)
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
@@ -236,17 +238,19 @@ if __name__ == "__main__":
             resume = Path(value)
 
     # Conditionally mock torch.compile
+    # LitGPT unconditionally calls torch.compile inside main(). To allow disabling it (e.g. for debugging
+    # or to avoid overhead), we mock it if --compile is not set.
+    compile_ctx = nullcontext()
     if not args.compile:
-        # Mock torch.compile to avoid issues on Windows or if explicitly disabled
-        def _mock_compile(model, *args, **kwargs):
-            return model
-
-        torch.compile = _mock_compile
         print("Disabled torch.compile (mocked).")
+        # Use patch to temporarily mock torch.compile during setup() execution
+        compile_ctx = patch("torch.compile", side_effect=lambda model, *args, **kwargs: model)
     else:
         print("Enabled torch.compile.")
 
     # Use FixedLLaMAMoE to improve compatibility with torch.compile
+    # The default LLaMAMoE implementation uses torch.where in a way that can fail with torch.compile
+    # and meta tensors. FixedLLaMAMoE provides a compatible implementation.
     try:
         from custom_moe import FixedLLaMAMoE
         import litgpt.model
@@ -344,18 +348,19 @@ if __name__ == "__main__":
 
     try:
         # Run pretrain
-        setup(
-            model_name="MoE-200M",
-            model_config=model_config,
-            out_dir=Path("./checkpoints"),
-            precision="bf16-mixed",
-            tokenizer_dir=Path("./data/tokenizer"),
-            data=data_module,
-            train=train,
-            logger_name="csv",
-            optimizer={"class_path": "torch.optim.AdamW", "init_args": {"lr": 0.0003, "weight_decay": 0.01}},
-            resume=resume,
-        )
+        with compile_ctx:
+            setup(
+                model_name="MoE-200M",
+                model_config=model_config,
+                out_dir=Path("./checkpoints"),
+                precision="bf16-mixed",
+                tokenizer_dir=Path("./data/tokenizer"),
+                data=data_module,
+                train=train,
+                logger_name="csv",
+                optimizer={"class_path": "torch.optim.AdamW", "init_args": {"lr": 0.0003, "weight_decay": 0.01}},
+                resume=resume,
+            )
     finally:
         stop.set()
         if monitor_thread is not None:
