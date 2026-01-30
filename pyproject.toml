@@ -22,6 +22,13 @@ dependencies = [
     "litdata>=0.2.59",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<10",
+    "pytest-cov>=4.0,<6",
+    "ruff>=0.6,<1",
+]
+
 [[tool.uv.index]]
 name = "aliyun"
 url = "https://mirrors.aliyun.com/pypi/simple/"
@@ -36,3 +43,18 @@ explicit = true
 torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 127
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"run_train.py" = ["E402", "I001"]

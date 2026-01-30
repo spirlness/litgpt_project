@@ -1,5 +1,5 @@
 import importlib
-import sys
+import os
 
 MODULES = [
     "torch",
@@ -15,8 +15,10 @@ MODULES = [
     "wandb",
     "safetensors",
     "sentencepiece",
-    "bitsandbytes",
 ]
+
+if os.environ.get("SKIP_BNB_RUNTIME") != "1":
+    MODULES.append("bitsandbytes")
 
 
 def try_import(name: str) -> tuple[bool, str]:
@@ -50,18 +52,21 @@ def main() -> int:
         torch.cuda.synchronize()
         print("CUDA matmul mean:", float(y.mean().item()))
 
-    # bitsandbytes: import alone isn't always enough on Windows, do a tiny op if possible.
-    try:
-        import bitsandbytes as bnb  # noqa: E402
+    # bitsandbytes: import alone isn't always enough on Windows; do a tiny touch if possible.
+    if os.environ.get("SKIP_BNB_RUNTIME") == "1":
+        print("\nBNB: skipped (SKIP_BNB_RUNTIME=1)")
+    else:
+        try:
+            import bitsandbytes as bnb  # noqa: E402
 
-        print("\nBNB:", getattr(bnb, "__version__", "<unknown>"))
-        # Some builds expose functional API; if present, touch it.
-        fn = getattr(bnb, "functional", None)
-        if fn is not None:
-            print("BNB functional:", "present")
-    except Exception as exc:  # noqa: BLE001
-        print("\nBNB_RUNTIME_FAIL:", repr(exc))
-        failures.append(("bitsandbytes(runtime)", repr(exc)))
+            print("\nBNB:", getattr(bnb, "__version__", "<unknown>"))
+            # Some builds expose functional API; if present, touch it.
+            fn = getattr(bnb, "functional", None)
+            if fn is not None:
+                print("BNB functional:", "present")
+        except Exception as exc:  # noqa: BLE001
+            print("\nBNB_RUNTIME_FAIL:", repr(exc))
+            failures.append(("bitsandbytes(runtime)", repr(exc)))
 
     if failures:
         print("\nFAILED_IMPORTS_OR_RUNTIME:")

@@ -1,12 +1,9 @@
-import yaml
-from pathlib import Path
-import os
-import sys
-import requests
-import tarfile
-import gzip
-import shutil
 import argparse
+import os
+from pathlib import Path
+
+import requests
+import yaml
 
 from wandb_dataset import log_dataset_to_wandb
 
@@ -15,8 +12,6 @@ def _ensure_data_directories(data_path: Path) -> None:
     data_path.mkdir(parents=True, exist_ok=True)
     (data_path / "train").mkdir(parents=True, exist_ok=True)
     (data_path / "val").mkdir(parents=True, exist_ok=True)
-
-
 
 
 # Set environment variables for data processing
@@ -52,7 +47,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb-alias",
         action="append",
-        default=os.environ.get("WANDB_DATA_ALIASES", "latest").split(",") if os.environ.get("WANDB_DATA_ALIASES") else ["latest"],
+        default=os.environ.get("WANDB_DATA_ALIASES", "latest").split(",")
+        if os.environ.get("WANDB_DATA_ALIASES")
+        else ["latest"],
         help="Artifact alias (repeatable). Default: latest",
     )
     parser.add_argument(
@@ -82,12 +79,10 @@ if __name__ == "__main__":
     print(f"Model config: {config['name']}")
     print(f"Vocab size: {config['padded_vocab_size']}")
     print(f"Context length: {config['block_size']}")
-    print(
-        f"MoE experts: {config['n_expert']}, active per token: {config['n_expert_per_token']}"
-    )
+    print(f"MoE experts: {config['n_expert']}, active per token: {config['n_expert_per_token']}")
 
     # Import LitGPT components
-    from litgpt.data import TextFiles, DataModule
+    from litgpt.data import TextFiles
     from litgpt.tokenizer import Tokenizer
 
     # Download and prepare tokenizer first

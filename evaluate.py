@@ -1,11 +1,10 @@
-import torch
+import argparse
 from pathlib import Path
-import sys
-import yaml
-import time
-from litgpt import GPT, Config
-from litgpt.tokenizer import Tokenizer
+
 import numpy as np
+import torch
+import yaml
+from litgpt import GPT, Config
 
 
 def evaluate(
@@ -103,11 +102,27 @@ def evaluate(
     perplexity = torch.exp(torch.tensor(avg_loss)).item()
 
     print("=" * 40)
-    print(f"Evaluation Complete")
+    print("Evaluation Complete")
     print(f"Average Loss: {avg_loss:.4f}")
     print(f"Perplexity: {perplexity:.4f}")
     print("=" * 40)
 
 
 if __name__ == "__main__":
-    evaluate()
+    parser = argparse.ArgumentParser(
+        description="Evaluate a LitGPT checkpoint on tokenized .bin shards"
+    )
+    parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints"))
+    parser.add_argument("--data-dir", type=Path, default=Path("data/custom_text"))
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--max-batches", type=int, default=100)
+    parser.add_argument("--device", type=str, default="auto")
+    args = parser.parse_args()
+
+    evaluate(
+        checkpoint_dir=args.checkpoint_dir,
+        data_dir=args.data_dir,
+        batch_size=args.batch_size,
+        max_batches=args.max_batches,
+        device=args.device,
+    )

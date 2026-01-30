@@ -18,6 +18,7 @@ from tqdm import tqdm
 # Fix for MoE meta-device FLOP counting
 try:
     import torch.fx.experimental._config as fx_config
+
     fx_config.meta_nonzero_assume_all_nonzero = True
     print("Enabled meta_nonzero_assume_all_nonzero for MoE FLOP counting.")
 except (ImportError, AttributeError) as e:
@@ -25,7 +26,9 @@ except (ImportError, AttributeError) as e:
 
 # Patch measure_flops to skip for MoE models
 import lightning.fabric.utilities.throughput as throughput_module
+
 _orig_measure_flops = throughput_module.measure_flops
+
 
 def _measure_flops_patch(model, forward_fn, loss_fn, *args, **kwargs):
     try:
@@ -34,11 +37,12 @@ def _measure_flops_patch(model, forward_fn, loss_fn, *args, **kwargs):
         print(f"FLOPs measurement not supported with MoE: {e}")
         return 0.0  # Return 0 flops
 
+
 throughput_module.measure_flops = _measure_flops_patch
 
 from litgpt.config import Config
 from litgpt.pretrain import setup
-from litgpt.args import TrainArgs, EvalArgs
+from litgpt.args import TrainArgs
 from litgpt.data import TextFiles
 
 
@@ -52,14 +56,9 @@ def _resolve_wandb_artifact_ref(ref: str) -> str:
     if len(parts) == 2:
         entity = os.environ.get("WANDB_ENTITY")
         if not entity:
-            raise ValueError(
-                "W&B artifact reference must include entity (entity/project/name:alias) "
-                "or set WANDB_ENTITY."
-            )
+            raise ValueError("W&B artifact reference must include entity (entity/project/name:alias) or set WANDB_ENTITY.")
         return f"{entity}/{ref}"
-    raise ValueError(
-        "Invalid W&B artifact reference. Expected entity/project/name:alias or project/name:alias."
-    )
+    raise ValueError("Invalid W&B artifact reference. Expected entity/project/name:alias or project/name:alias.")
 
 
 def _download_dataset_from_wandb(*, artifact_ref: str, root_dir: Path) -> Path:
@@ -73,9 +72,7 @@ def _download_dataset_from_wandb(*, artifact_ref: str, root_dir: Path) -> Path:
     download_dir = Path(artifact.download(root=str(root_dir))).resolve()
     data_dir = download_dir / "custom_text"
     if not data_dir.exists():
-        raise FileNotFoundError(
-            f"Downloaded artifact does not contain expected 'custom_text' directory: {data_dir}"
-        )
+        raise FileNotFoundError(f"Downloaded artifact does not contain expected 'custom_text' directory: {data_dir}")
     return data_dir
 
 
@@ -137,6 +134,7 @@ def _start_progress_bar(*, out_dir: Path, total_tokens: int, stop: threading.Eve
     thread = threading.Thread(target=_worker, name="progress-monitor", daemon=True)
     thread.start()
     return thread, bar
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train LitGPT MoE model")
@@ -244,13 +242,13 @@ if __name__ == "__main__":
 
     # Create MoE Config
     model_config = Config(
-        name='MoE-200M',
+        name="MoE-200M",
         block_size=2048,
         n_layer=12,
         n_embd=768,
         n_head=12,
         n_query_groups=4,
-        mlp_class_name='LLaMAMoE',
+        mlp_class_name="LLaMAMoE",
         moe_intermediate_size=2048,
         n_expert=8,
         n_expert_per_token=2,
@@ -259,7 +257,7 @@ if __name__ == "__main__":
         bias=False,
         parallel_residual=False,
         rope_base=10000,
-        norm_class_name='RMSNorm',
+        norm_class_name="RMSNorm",
         norm_eps=1e-5,
     )
 
@@ -331,15 +329,15 @@ if __name__ == "__main__":
     try:
         # Run pretrain
         setup(
-            model_name='MoE-200M',
+            model_name="MoE-200M",
             model_config=model_config,
-            out_dir=Path('./checkpoints'),
-            precision='bf16-mixed',
-            tokenizer_dir=Path('./data/tokenizer'),
+            out_dir=Path("./checkpoints"),
+            precision="bf16-mixed",
+            tokenizer_dir=Path("./data/tokenizer"),
             data=data_module,
             train=train,
-            logger_name='csv',
-            optimizer={'class_path': 'torch.optim.AdamW', 'init_args': {'lr': 0.0003, 'weight_decay': 0.01}},
+            logger_name="csv",
+            optimizer={"class_path": "torch.optim.AdamW", "init_args": {"lr": 0.0003, "weight_decay": 0.01}},
             resume=resume,
         )
     finally:

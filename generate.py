@@ -1,17 +1,16 @@
-import torch
-from pathlib import Path
-import sys
-import time
-import yaml
-import threading
+import argparse
 import queue
+import sys
+import threading
+import time
+from pathlib import Path
+
+import torch
+import yaml
 from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
-import argparse
 
-STREAMER_JOIN_TIMEOUT_SECONDS = (
-    1.0  # Short timeout to avoid hanging; enough time to flush the token queue.
-)
+STREAMER_JOIN_TIMEOUT_SECONDS = 1.0  # Short timeout to avoid hanging; enough time to flush the token queue.
 
 
 class AsyncTokenStreamer:
@@ -47,33 +46,9 @@ class AsyncTokenStreamer:
         self.thread.join(timeout=STREAMER_JOIN_TIMEOUT_SECONDS)
         if self.thread.is_alive():
             print(
-                "Warning: token streamer thread did not exit cleanly within timeout. "
-                "This may indicate a threading issue.",
+                "Warning: token streamer thread did not exit cleanly within timeout. This may indicate a threading issue.",
                 file=sys.stderr,
             )
-
-
-class AsyncTokenStreamer:
-    def __init__(self):
-        self.queue = queue.Queue()
-        self.stop_signal = object()
-        self.thread = threading.Thread(target=self._worker, daemon=True)
-        self.thread.start()
-
-    def _worker(self):
-        while True:
-            token = self.queue.get()
-            if token is self.stop_signal:
-                break
-            print(token, end="", flush=True)
-            self.queue.task_done()
-
-    def put(self, token):
-        self.queue.put(token)
-
-    def close(self):
-        self.queue.put(self.stop_signal)
-        self.thread.join()
 
 
 def generate(
@@ -97,9 +72,7 @@ def generate(
         config_path = Path("litgpt_config.yaml")
 
     if not config_path.exists():
-        print(
-            f"Error: Config not found at {config_path}. Run create_litgpt_config.py first."
-        )
+        print(f"Error: Config not found at {config_path}. Run create_litgpt_config.py first.")
         return
 
     with open(config_path, "r", encoding="utf-8") as f:
@@ -114,9 +87,7 @@ def generate(
 
     tokenizer_dir = Path("data/tokenizer")
     if not tokenizer_dir.exists():
-        print(
-            f"Error: Tokenizer not found at {tokenizer_dir}. Run prepare_data.py first."
-        )
+        print(f"Error: Tokenizer not found at {tokenizer_dir}. Run prepare_data.py first.")
         return
 
     tokenizer = Tokenizer(tokenizer_dir)
@@ -146,7 +117,6 @@ def generate(
     model.eval()
 
     encoded = tokenizer.encode(prompt, device=device)
-    prompt_length = encoded.size(0)
 
     print("\nGenerating...")
     print("-" * 50)
@@ -157,7 +127,6 @@ def generate(
     t0 = time.perf_counter()
     generated_tokens = 0
     for i in range(max_new_tokens):
-        generated_tokens += 1
         if encoded.size(0) > config.block_size:
             idx_cond = encoded[-config.block_size :]
         else:

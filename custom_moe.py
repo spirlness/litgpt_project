@@ -10,8 +10,6 @@ This is a simplified and fixed version of LLaMAMoE that:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
-
 from litgpt.model import LLaMAMLP
 
 
@@ -35,6 +33,7 @@ class FixedLLaMAMoE(nn.Module):
         else:
             # Import GroupedTopkRouter from litgpt.model
             from litgpt.model import GroupedTopkRouter
+
             self.gate = GroupedTopkRouter(config)
 
         # Create expert MLPs
@@ -45,7 +44,8 @@ class FixedLLaMAMoE(nn.Module):
         # Optional shared experts
         if config.n_shared_expert:
             self.shared_experts = LLaMAMLP(
-                config, intermediate_size=config.moe_intermediate_size * config.n_shared_expert
+                config,
+                intermediate_size=config.moe_intermediate_size * config.n_shared_expert,
             )
 
         self.config = config
@@ -134,7 +134,8 @@ class SimplifiedLLaMAMoE(nn.Module):
 
         if config.n_shared_expert:
             self.shared_experts = LLaMAMLP(
-                config, intermediate_size=config.moe_intermediate_size * config.n_shared_expert
+                config,
+                intermediate_size=config.moe_intermediate_size * config.n_shared_expert,
             )
 
         self.config = config
@@ -148,16 +149,13 @@ class SimplifiedLLaMAMoE(nn.Module):
         B, T, C = x.size()
         residual_x = x.clone()
         x_flat = x.view(-1, C)  # (B*T, C)
-        n_tokens = x_flat.size(0)
 
         # Get routing logits and probabilities
         router_logits = self.gate(x_flat)  # (B*T, n_expert)
         router_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
 
         # Get top-k experts per token (using topk on log_probs)
-        topk_probs, topk_indices = torch.topk(
-            router_probs, k=self.n_expert_per_token, dim=-1
-        )
+        topk_probs, topk_indices = torch.topk(router_probs, k=self.n_expert_per_token, dim=-1)
         topk_probs = topk_probs.to(dtype=x.dtype)
 
         # Initialize output
@@ -176,7 +174,7 @@ class SimplifiedLLaMAMoE(nn.Module):
 
                 if token_indices.numel() > 0:
                     # Get inputs for tokens using this expert
-                    expert_input = x_flat[expert_input]  # typo: should be x_flat[token_indices]
+                    expert_input = x_flat[token_indices]
                     expert_output = self.experts[expert_id](expert_input)
 
                     # Get probabilities and accumulate
@@ -208,7 +206,8 @@ class BatchedMoE(nn.Module):
 
         if config.n_shared_expert:
             self.shared_experts = LLaMAMLP(
-                config, intermediate_size=config.moe_intermediate_size * config.n_shared_expert
+                config,
+                intermediate_size=config.moe_intermediate_size * config.n_shared_expert,
             )
 
         self.config = config
@@ -222,7 +221,6 @@ class BatchedMoE(nn.Module):
         B, T, C = x.size()
         residual_x = x.clone()
         x_flat = x.view(-1, C)
-        n_tokens = x_flat.size(0)
 
         # Get routing
         router = self.gate(x_flat)  # (n_tokens, n_expert)
@@ -283,14 +281,16 @@ class ManualMoELayer(nn.Module):
         self.gate = nn.Linear(config.n_embd, config.n_expert, bias=False)
 
         # Create separate expert networks
-        self.experts = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(config.n_embd, config.moe_intermediate_size, bias=config.bias),
-                nn.SiLU(),
-                nn.Linear(config.moe_intermediate_size, config.n_embd, bias=config.bias)
-            )
-            for _ in range(config.n_expert)
-        ])
+        self.experts = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(config.n_embd, config.moe_intermediate_size, bias=config.bias),
+                    nn.SiLU(),
+                    nn.Linear(config.moe_intermediate_size, config.n_embd, bias=config.bias),
+                )
+                for _ in range(config.n_expert)
+            ]
+        )
 
         self.config = config
         self.n_expert = config.n_expert
@@ -302,7 +302,6 @@ class ManualMoELayer(nn.Module):
         """
         B, T, C = x.size()
         x_flat = x.view(-1, C)
-        n_tokens = x_flat.size(0)
 
         # Simple routing: compute expert scores
         scores = self.gate(x_flat)  # (n_tokens, n_expert)
@@ -341,8 +340,8 @@ class ManualMoELayer(nn.Module):
 
 # Export all implementations
 __all__ = [
-    'FixedLLaMAMoE',
-    'SimplifiedLLaMAMoE',
-    'BatchedMoE',
-    'ManualMoELayer',
+    "FixedLLaMAMoE",
+    "SimplifiedLLaMAMoE",
+    "BatchedMoE",
+    "ManualMoELayer",
 ]

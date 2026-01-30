@@ -123,7 +123,9 @@ def _main() -> int:
     parser.add_argument(
         "--wandb-alias",
         action="append",
-        default=os.environ.get("WANDB_DATA_ALIASES", "latest").split(",") if os.environ.get("WANDB_DATA_ALIASES") else ["latest"],
+        default=(
+            os.environ.get("WANDB_DATA_ALIASES", "latest").split(",") if os.environ.get("WANDB_DATA_ALIASES") else ["latest"]
+        ),
     )
     parser.add_argument(
         "--wandb-tag",
@@ -134,9 +136,7 @@ def _main() -> int:
     args = parser.parse_args()
 
     if not args.wandb_project:
-        raise SystemExit(
-            "Missing W&B project. Provide --wandb-project <project> or set $env:WANDB_PROJECT='<project>'."
-        )
+        raise SystemExit("Missing W&B project. Provide --wandb-project <project> or set $env:WANDB_PROJECT='<project>'.")
 
     log_dataset_to_wandb(
         data_dir=args.data_dir,
