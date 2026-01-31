@@ -220,8 +220,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--compile",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable torch.compile (default: False). Use --compile to enable.",
+        default=True,
+        help="Enable torch.compile (default: True). Use --no-compile to disable.",
     )
 
     parser.add_argument(
@@ -276,9 +276,10 @@ if __name__ == "__main__":
         else:
             resume = Path(value)
 
-    # Conditionally mock torch.compile
+    # Conditionally mock torch.compile.
+    # LitGPT defaults to unconditional compilation. To support --no-compile,
+    # we must mock torch.compile to prevent it from running.
     if not args.compile:
-        # Mock torch.compile to avoid issues on Windows or if explicitly disabled
         def _mock_compile(model, *args, **kwargs):
             return model
 
