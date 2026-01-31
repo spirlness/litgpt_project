@@ -10,12 +10,16 @@ data:
     num_workers: 2
 
 train:
-  global_batch_size: 32
+  global_batch_size: 16
   log_interval: 1
   max_tokens: 320000
   lr_warmup_steps: 5
-  micro_batch_size: 2
+  micro_batch_size: 1
   save_interval: 10
+  gradient_checkpointing: true
+  max_norm: 1.0
+  max_seq_length: 2048
+
 
 logger_name: csv
 

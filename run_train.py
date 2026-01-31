@@ -2,414 +2,187 @@ import sys
 import os
 import argparse
 import threading
-import time
-from typing import Optional
-
-# Helps reduce CUDA allocator fragmentation (must be set before importing torch)
-os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-# Back-compat alias used by some docs/tools
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", os.environ["PYTORCH_ALLOC_CONF"])
+import yaml
+from pathlib import Path
+from typing import Optional, Union
 
 import torch
-from pathlib import Path
-
-from tqdm import tqdm
-
-# Enable Tensor Cores for float32 matrix multiplications
-torch.set_float32_matmul_precision("high")
-
-# Fix for MoE meta-device FLOP counting
-try:
-    import torch.fx.experimental._config as fx_config
-
-    fx_config.meta_nonzero_assume_all_nonzero = True
-    print("Enabled meta_nonzero_assume_all_nonzero for MoE FLOP counting.")
-except (ImportError, AttributeError) as e:
-    print(f"Could not set meta_nonzero_assume_all_nonzero: {e}")
-
-# Patch measure_flops to skip for MoE models
-import lightning.fabric.utilities.throughput as throughput_module
-
-# Patch Lightning checkpoint saving to avoid buffering multi-GB checkpoints in memory.
-# The default Fabric TorchCheckpointIO uses an in-memory BytesIO for atomic saves, which can
-# raise MemoryError on large models. For local training, streaming directly to disk is fine.
-try:
-    import lightning.fabric.plugins.io.torch_io as torch_io_module
-
-    def _non_atomic_save(checkpoint, path) -> None:  # type: ignore[no-redef]
-        torch.save(checkpoint, path)
-
-    torch_io_module._atomic_save = _non_atomic_save  # type: ignore[attr-defined]
-    print("Patched Lightning _atomic_save to stream to disk.")
-except Exception as e:  # noqa: BLE001
-    print(f"Could not patch Lightning _atomic_save: {e}")
-
-_orig_measure_flops = throughput_module.measure_flops
-
-
-def _measure_flops_patch(model, forward_fn, loss_fn, *args, **kwargs):
-    try:
-        return _orig_measure_flops(model, forward_fn, loss_fn, *args, **kwargs)
-    except (NotImplementedError, AttributeError) as e:
-        print(f"FLOPs measurement not supported with MoE: {e}")
-        return 0.0  # Return 0 flops
-
-
-throughput_module.measure_flops = _measure_flops_patch
-
 from litgpt.config import Config
 from litgpt.pretrain import setup
 from litgpt.args import TrainArgs, LogArgs
 from litgpt.data import TextFiles
 
+from src.utils import apply_patches, patch_gradient_checkpointing, start_progress_bar
 
-def _resolve_wandb_artifact_ref(ref: str) -> str:
-    # Accept:
-    # - entity/project/artifact:alias
-    # - project/artifact:alias (uses WANDB_ENTITY if set)
-    parts = ref.split("/")
-    if len(parts) >= 3:
-        return ref
-    if len(parts) == 2:
-        entity = os.environ.get("WANDB_ENTITY")
-        if not entity:
-            raise ValueError("W&B artifact reference must include entity (entity/project/name:alias) or set WANDB_ENTITY.")
-        return f"{entity}/{ref}"
-    raise ValueError("Invalid W&B artifact reference. Expected entity/project/name:alias or project/name:alias.")
+apply_patches()
 
 
-def _download_dataset_from_wandb(*, artifact_ref: str, root_dir: Path) -> Path:
-    try:
-        import wandb
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError("wandb is required to download dataset artifacts") from exc
-
-    api = wandb.Api()
-    artifact = api.artifact(artifact_ref)
-    download_dir = Path(artifact.download(root=str(root_dir))).resolve()
-    data_dir = download_dir / "custom_text"
-    if not data_dir.exists():
-        raise FileNotFoundError(f"Downloaded artifact does not contain expected 'custom_text' directory: {data_dir}")
-    return data_dir
+def load_configs(model_config_path: Path, train_config_path: Path):
+    with open(model_config_path, "r") as f:
+        model_cfg = yaml.safe_load(f)
+    with open(train_config_path, "r") as f:
+        train_cfg = yaml.safe_load(f)
+    return model_cfg, train_cfg
 
 
-def _latest_metrics_csv(out_dir: Path) -> Optional[Path]:
-    logs_dir = (out_dir / "logs").resolve()
-    if not logs_dir.exists():
-        return None
-    candidates = list(logs_dir.rglob("metrics.csv"))
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+def get_optimizer_config(use_8bit: bool = False):
+    if use_8bit:
+        try:
+            import bitsandbytes
 
+            return {"class_path": "bitsandbytes.optim.AdamW8bit", "init_args": {"lr": 0.0003, "weight_decay": 0.01}}
+        except ImportError:
+            pass
 
-def _read_last_total_tokens(metrics_csv: Path) -> Optional[int]:
-    try:
-        with metrics_csv.open("r", encoding="utf-8") as f:
-            header = f.readline().strip("\n\r")
-            if not header:
-                return None
-            columns = header.split(",")
-            idx = None
-            for name in ("total_tokens", "tokens"):
-                if name in columns:
-                    idx = columns.index(name)
-                    break
-            if idx is None:
-                return None
-            last = None
-            for line in f:
-                line = line.strip("\n\r")
-                if line:
-                    last = line
-            if not last:
-                return None
-            parts = last.split(",")
-            if idx >= len(parts) or not parts[idx]:
-                return None
-            return int(float(parts[idx]))
-    except Exception:
-        return None
-
-
-def _start_progress_bar(*, out_dir: Path, total_tokens: int, stop: threading.Event) -> tuple[threading.Thread, tqdm]:
-    bar = tqdm(total=total_tokens, desc="Training", unit="tok", dynamic_ncols=True)
-
-    def _worker() -> None:
-        last = 0
-        while not stop.is_set():
-            metrics = _latest_metrics_csv(out_dir)
-            if metrics is not None:
-                current = _read_last_total_tokens(metrics)
-                if current is not None and current > last:
-                    bar.update(min(current, total_tokens) - last)
-                    last = min(current, total_tokens)
-                    if last >= total_tokens:
-                        break
-            time.sleep(1.0)
-
-    thread = threading.Thread(target=_worker, name="progress-monitor", daemon=True)
-    thread.start()
-    return thread, bar
+    return {"class_path": "torch.optim.AdamW", "init_args": {"lr": 0.0003, "weight_decay": 0.01}}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train LitGPT MoE model")
-    parser.add_argument(
-        "--dataset-dir",
-        type=Path,
-        default=Path(os.environ.get("DATASET_DIR", "./data/custom_text")),
-        help="Local dataset root directory containing train/ and val/",
-    )
-    parser.add_argument(
-        "--wandb-dataset",
-        type=str,
-        default=os.environ.get("WANDB_DATASET_ARTIFACT"),
-        help=(
-            "Optional W&B dataset Artifact reference to download and use for training. "
-            "Examples: entity/project/dataset-custom_text:latest or project/dataset-custom_text:latest (needs WANDB_ENTITY)."
-        ),
-    )
-    parser.add_argument(
-        "--wandb-artifacts-dir",
-        type=Path,
-        default=Path(os.environ.get("WANDB_ARTIFACTS_DIR", "./data/wandb_artifacts")),
-        help="Local cache directory for downloaded W&B artifacts",
-    )
+    parser.add_argument("--model-config", type=Path, default=Path("model_config.yaml"))
+    parser.add_argument("--train-config", type=Path, default=Path("train_config.yaml"))
+    parser.add_argument("--micro-batch-size", type=int)
+    parser.add_argument("--global-batch-size", type=int)
+    parser.add_argument("--max-tokens", type=int)
+    parser.add_argument("--max-seq-length", type=int)
+    parser.add_argument("--out-dir", type=Path)
+    parser.add_argument("--tokenizer-dir", type=Path)
+    parser.add_argument("--precision", type=str)
+    parser.add_argument("--resume", type=str, default=os.environ.get("RESUME"))
+    parser.add_argument("--optimizer-8bit", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--logger", type=str, choices=["csv", "wandb", "tensorboard"])
+    parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
 
-    # Resume training
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=os.environ.get("RESUME"),
-        help="Resume from checkpoint: 'auto', 'true', or a checkpoint directory path",
-    )
+    args, _ = parser.parse_known_args()
 
-    # Memory-related knobs (safe defaults for 6GB GPUs)
-    parser.add_argument(
-        "--micro-batch-size",
-        type=int,
-        default=int(os.environ.get("MICRO_BATCH_SIZE", "1")),
-        help="Per-device micro batch size (lower to reduce CUDA memory)",
-    )
-    parser.add_argument(
-        "--global-batch-size",
-        type=int,
-        default=int(os.environ.get("GLOBAL_BATCH_SIZE", "8")),
-        help="Global batch size (effective batch via gradient accumulation)",
-    )
-    parser.add_argument(
-        "--max-tokens",
-        type=int,
-        default=int(os.environ.get("MAX_TOKENS", "320000")),
-        help="Training budget in tokens (lower for quick sanity runs)",
-    )
-    parser.add_argument(
-        "--max-seq-length",
-        type=int,
-        default=int(os.environ.get("MAX_SEQ_LENGTH", "1024")),
-        help="Max sequence length for training (lower to reduce CUDA memory)",
-    )
+    model_cfg_raw, train_cfg_raw = load_configs(args.model_config, args.train_config)
 
-    parser.add_argument(
-        "--progress",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Show a progress bar (reads tokens from CSV logger)",
-    )
-    parser.add_argument(
-        "--compile",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable torch.compile (default: False). Use --compile to enable.",
-    )
+    if "norm_eps" in model_cfg_raw:
+        model_cfg_raw["norm_eps"] = float(model_cfg_raw["norm_eps"])
 
-    parser.add_argument(
-        "--wandb-project",
-        type=str,
-        default=os.environ.get("WANDB_PROJECT"),
-        help="W&B project name for logging",
-    )
-    parser.add_argument(
-        "--wandb-entity",
-        type=str,
-        default=os.environ.get("WANDB_ENTITY"),
-        help="Optional W&B entity/team",
-    )
-    parser.add_argument(
-        "--wandb-run-name",
-        type=str,
-        default=os.environ.get("WANDB_RUN_NAME"),
-        help="Optional W&B run name",
-    )
-    parser.add_argument(
-        "--wandb-tags",
-        type=str,
-        default=os.environ.get("WANDB_TAGS"),
-        help="Comma-separated run tags for W&B",
-    )
-    parser.add_argument(
-        "--wandb-notes",
-        type=str,
-        default=os.environ.get("WANDB_NOTES"),
-        help="Notes for W&B run",
-    )
-    parser.add_argument(
-        "--logger",
-        type=str,
-        default=os.environ.get("LOGGER", "csv"),
-        choices=["csv", "wandb", "tensorboard"],
-        help="Logger backend: csv (default), wandb, or tensorboard",
-    )
+    if args.micro_batch_size:
+        train_cfg_raw["train"]["micro_batch_size"] = args.micro_batch_size
+    if args.global_batch_size:
+        train_cfg_raw["train"]["global_batch_size"] = args.global_batch_size
+    if args.max_tokens:
+        train_cfg_raw["train"]["max_tokens"] = args.max_tokens
+    if args.max_seq_length:
+        train_cfg_raw["train"]["max_seq_length"] = args.max_seq_length
+    if args.logger:
+        train_cfg_raw["logger_name"] = args.logger
+    if args.out_dir:
+        train_cfg_raw["out_dir"] = str(args.out_dir)
+    if args.tokenizer_dir:
+        train_cfg_raw["tokenizer_dir"] = str(args.tokenizer_dir)
+    if args.precision:
+        train_cfg_raw["precision"] = args.precision
 
-    # Parse our custom flags.
-    # Note: LitGPT internally saves hyperparameters by parsing sys.argv via jsonargparse.
-    # We'll set a LitGPT-compatible argv (including the required positional `model_name`) right before calling setup().
-    args, _remaining_argv = parser.parse_known_args()
-    resume: bool | str | Path = False
-    if args.resume:
-        value = str(args.resume).strip()
-        if value.lower() in {"auto"}:
-            resume = "auto"
-        elif value.lower() in {"true", "1", "yes", "y"}:
-            resume = True
-        else:
-            resume = Path(value)
+    grad_checkpointing = args.gradient_checkpointing
+    if grad_checkpointing is None:
+        grad_checkpointing = train_cfg_raw["train"].get("gradient_checkpointing", False)
 
-    # Conditionally mock torch.compile
-    if not args.compile:
-        # Mock torch.compile to avoid issues on Windows or if explicitly disabled
-        def _mock_compile(model, *args, **kwargs):
-            return model
+    train_cfg_raw["train"].pop("gradient_checkpointing", None)
 
-        torch.compile = _mock_compile
-        print("Disabled torch.compile (mocked).")
-    else:
-        print("Enabled torch.compile.")
-
-    # Use FixedLLaMAMoE to improve compatibility with torch.compile
     try:
         from src.custom_moe import FixedLLaMAMoE
         import litgpt.model
 
         litgpt.model.LLaMAMoE = FixedLLaMAMoE
-        print("Patched litgpt.model.LLaMAMoE with FixedLLaMAMoE")
     except ImportError:
-        print("Warning: Could not import FixedLLaMAMoE, using default LLaMAMoE")
+        pass
 
-    # Create MoE Config
-    model_config = Config(
-        name="MoE-200M",
-        block_size=2048,
-        n_layer=12,
-        n_embd=768,
-        n_head=12,
-        n_query_groups=4,
-        mlp_class_name="LLaMAMoE",
-        moe_intermediate_size=2048,
-        n_expert=8,
-        n_expert_per_token=2,
-        padded_vocab_size=50257,
-        vocab_size=50257,
-        bias=False,
-        parallel_residual=False,
-        rope_base=10000,
-        norm_class_name="RMSNorm",
-        norm_eps=1e-5,
-    )
+    if grad_checkpointing:
+        patch_gradient_checkpointing()
+        print("Enabled gradient checkpointing via Block.forward patch")
 
-    dataset_root = args.dataset_dir
-    if args.wandb_dataset:
-        artifact_ref = _resolve_wandb_artifact_ref(args.wandb_dataset)
-        print(f"Downloading dataset Artifact from W&B: {artifact_ref}")
-        dataset_root = _download_dataset_from_wandb(
-            artifact_ref=artifact_ref,
-            root_dir=args.wandb_artifacts_dir,
-        )
-        print(f"Using dataset from: {dataset_root}")
+    model_config = Config(**model_cfg_raw)
 
-    # Setup data module
     data_module = TextFiles(
-        train_data_path=Path(dataset_root) / "train",
-        val_data_path=Path(dataset_root) / "val",
-        num_workers=2,
+        train_data_path=Path(train_cfg_raw["data"]["init_args"]["train_data_path"]),
+        val_data_path=Path(train_cfg_raw["data"]["init_args"]["val_data_path"]),
+        num_workers=train_cfg_raw["data"]["init_args"].get("num_workers", 2),
     )
 
-    # Setup training args
-    train = TrainArgs(
-        global_batch_size=args.global_batch_size,
-        log_interval=1,
-        max_tokens=args.max_tokens,
-        lr_warmup_steps=5,
-        micro_batch_size=args.micro_batch_size,
-        max_seq_length=args.max_seq_length,
-        save_interval=10,
-        max_norm=1.0,
-    )
+    train_args = TrainArgs(**train_cfg_raw["train"])
 
-    # Ensure LitGPT's internal hyperparameter capture (jsonargparse) sees a valid CLI.
-    # This prevents post-run errors like "Option 'model_name' is required".
+    out_dir = Path(train_cfg_raw.get("out_dir", "./checkpoints"))
     sys.argv = [
         sys.argv[0],
-        "MoE-200M",
-        "--logger_name",
-        args.logger,
-        "--precision",
-        "bf16-mixed",
+        model_cfg_raw["name"],
         "--out_dir",
-        str(Path("./checkpoints")),
+        str(out_dir),
+        "--precision",
+        train_cfg_raw.get("precision", "bf16-mixed"),
         "--tokenizer_dir",
-        str(Path("./data/tokenizer")),
+        train_cfg_raw.get("tokenizer_dir", "./data/tokenizer"),
         "--train.global_batch_size",
-        str(args.global_batch_size),
+        str(train_args.global_batch_size),
         "--train.micro_batch_size",
-        str(args.micro_batch_size),
+        str(train_args.micro_batch_size),
         "--train.max_tokens",
-        str(args.max_tokens),
+        str(train_args.max_tokens),
         "--train.max_seq_length",
-        str(args.max_seq_length),
+        str(train_args.max_seq_length),
     ]
 
+    resume_val: Union[bool, str, Path] = False
     if args.resume:
+        if args.resume.lower() == "auto":
+            resume_val = "auto"
+        elif args.resume.lower() in ["true", "1", "yes"]:
+            resume_val = True
+        elif args.resume.lower() in ["false", "0", "no"]:
+            resume_val = False
+        else:
+            p = Path(args.resume)
+            if p.is_dir():
+                if (p / "lit_model.pth").exists():
+                    resume_val = p / "lit_model.pth"
+                else:
+                    files = list(p.glob("**/*.pth"))
+                    if files:
+                        resume_val = sorted(files)[-1]
+                    else:
+                        resume_val = p
+            else:
+                resume_val = p
         sys.argv.extend(["--resume", str(args.resume)])
 
-    stop = threading.Event()
-    monitor_thread = None
-    bar = None
-    if args.progress:
-        monitor_thread, bar = _start_progress_bar(
-            out_dir=Path("./checkpoints"),
-            total_tokens=args.max_tokens,
-            stop=stop,
-        )
+    if not args.compile:
+        torch.compile = lambda m, *args, **kwargs: m
 
-    log_args = LogArgs() if args.logger != "wandb" else None
-    if args.logger == "wandb":
-        if not args.wandb_project:
-            raise ValueError("W&B logging requires --wandb-project or WANDB_PROJECT env var")
-        log_args = LogArgs(
-            project=args.wandb_project,
-            run=args.wandb_run_name,
+    log_args = LogArgs()
+    if train_cfg_raw["logger_name"] == "wandb":
+        log_args = LogArgs(project=os.environ.get("WANDB_PROJECT", "moe-training"))
+
+    stop_event = threading.Event()
+    monitor_thread, bar = None, None
+    if args.progress:
+        monitor_thread, bar = start_progress_bar(
+            out_dir=out_dir,
+            total_tokens=train_args.max_tokens or 0,
+            stop=stop_event,
         )
 
     try:
-        # Run pretrain
         setup(
-            model_name="MoE-200M",
+            model_name=model_cfg_raw["name"],
             model_config=model_config,
-            out_dir=Path("./checkpoints"),
-            precision="bf16-mixed",
-            tokenizer_dir=Path("./data/tokenizer"),
+            out_dir=out_dir,
+            precision=train_cfg_raw.get("precision", "bf16-mixed"),
+            tokenizer_dir=Path(train_cfg_raw.get("tokenizer_dir", "./data/tokenizer")),
             data=data_module,
-            train=train,
-            logger_name=args.logger,
+            train=train_args,
+            logger_name=train_cfg_raw["logger_name"],
             log=log_args,
-            optimizer={"class_path": "torch.optim.AdamW", "init_args": {"lr": 0.0003, "weight_decay": 0.01}},
-            resume=resume,
+            optimizer=get_optimizer_config(args.optimizer_8bit),
+            resume=resume_val,
         )
     finally:
-        stop.set()
-        if monitor_thread is not None:
+        stop_event.set()
+        if monitor_thread:
             monitor_thread.join(timeout=3.0)
-        if bar is not None:
+        if bar:
             bar.close()
