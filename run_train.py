@@ -2,9 +2,11 @@ import sys
 import os
 import argparse
 import threading
+import contextlib
 import yaml
 from pathlib import Path
 from typing import Optional, Union
+from unittest.mock import patch
 
 import torch
 from litgpt.config import Config
@@ -150,9 +152,6 @@ if __name__ == "__main__":
                 resume_val = p
         sys.argv.extend(["--resume", str(args.resume)])
 
-    if not args.compile:
-        torch.compile = lambda m, *args, **kwargs: m
-
     log_args = LogArgs()
     if train_cfg_raw["logger_name"] == "wandb":
         log_args = LogArgs(project=os.environ.get("WANDB_PROJECT", "moe-training"))
@@ -167,19 +166,26 @@ if __name__ == "__main__":
         )
 
     try:
-        setup(
-            model_name=model_cfg_raw["name"],
-            model_config=model_config,
-            out_dir=out_dir,
-            precision=train_cfg_raw.get("precision", "bf16-mixed"),
-            tokenizer_dir=Path(train_cfg_raw.get("tokenizer_dir", "./data/tokenizer")),
-            data=data_module,
-            train=train_args,
-            logger_name=train_cfg_raw["logger_name"],
-            log=log_args,
-            optimizer=get_optimizer_config(args.optimizer_8bit),
-            resume=resume_val,
+        # LitGPT unconditionally calls torch.compile. We mock it if compilation is disabled.
+        compile_ctx = (
+            patch("torch.compile", side_effect=lambda m, *args, **kwargs: m)
+            if not args.compile
+            else contextlib.nullcontext()
         )
+        with compile_ctx:
+            setup(
+                model_name=model_cfg_raw["name"],
+                model_config=model_config,
+                out_dir=out_dir,
+                precision=train_cfg_raw.get("precision", "bf16-mixed"),
+                tokenizer_dir=Path(train_cfg_raw.get("tokenizer_dir", "./data/tokenizer")),
+                data=data_module,
+                train=train_args,
+                logger_name=train_cfg_raw["logger_name"],
+                log=log_args,
+                optimizer=get_optimizer_config(args.optimizer_8bit),
+                resume=resume_val,
+            )
     finally:
         stop_event.set()
         if monitor_thread:
