@@ -52,7 +52,7 @@ if __name__ == "__main__":
     parser.add_argument("--precision", type=str)
     parser.add_argument("--resume", type=str, default=os.environ.get("RESUME"))
     parser.add_argument("--optimizer-8bit", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--logger", type=str, choices=["csv", "wandb", "tensorboard"])
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction)
     parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
@@ -166,7 +166,8 @@ if __name__ == "__main__":
         )
 
     try:
-        # LitGPT unconditionally calls torch.compile. We mock it if compilation is disabled.
+        # LitGPT unconditionally calls torch.compile in setup().
+        # We patch it if compilation is disabled via --no-compile to respect the user's choice.
         compile_ctx = (
             patch("torch.compile", side_effect=lambda m, *args, **kwargs: m)
             if not args.compile
