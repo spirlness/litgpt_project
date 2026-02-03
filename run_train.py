@@ -6,7 +6,7 @@ import contextlib
 import yaml
 from pathlib import Path
 from typing import Optional, Union, Literal
-from functools import partial, wraps
+from functools import partial
 from unittest.mock import patch
 
 import torch
@@ -53,13 +53,23 @@ def create_compile_context(
         kwargs.setdefault("fullgraph", fullgraph)
         compiled = _orig_compile(model, *args, **kwargs)
 
-        @wraps(model)
-        def _wrapped(*call_args, **call_kwargs):
-            if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
-                torch.compiler.cudagraph_mark_step_begin()
-            return compiled(*call_args, **call_kwargs)
+        class _CompiledWrapper(torch.nn.Module):
+            def __init__(self, compiled_module):
+                super().__init__()
+                self.compiled = compiled_module
 
-        return _wrapped
+            def forward(self, *call_args, **call_kwargs):
+                if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+                    torch.compiler.cudagraph_mark_step_begin()
+                return self.compiled(*call_args, **call_kwargs)
+
+            def __getattr__(self, name):
+                try:
+                    return super().__getattr__(name)
+                except AttributeError:
+                    return getattr(self.compiled, name)
+
+        return _CompiledWrapper(compiled)
 
     return patch("litgpt.pretrain.torch.compile", side_effect=_custom_compile)
 
