@@ -3,12 +3,11 @@ import os
 import shutil
 import argparse
 import threading
-import contextlib
 import yaml
 import requests
 from pathlib import Path
-from typing import Optional, Union, Literal
-from functools import partial, wraps
+from typing import Union, Literal
+from functools import wraps
 from unittest.mock import patch
 
 import torch
@@ -18,16 +17,14 @@ from litgpt.args import TrainArgs, LogArgs
 from litgpt.data import TextFiles
 
 from src.utils import (
-    apply_patches,
+    apply_runtime_config,
     patch_gradient_checkpointing,
     start_progress_bar,
     verify_flash_attention,
     configure_flash_attention,
-    patch_cudagraph_overwritten_error,
+    patch_flops_measurement,
+    patch_cudagraph_for_compile,
 )
-
-apply_patches()
-patch_cudagraph_overwritten_error()
 
 
 def load_configs(model_config_path: Path, train_config_path: Path):
@@ -99,12 +96,8 @@ def ensure_smoke_tokenizer(tokenizer_dir: Path) -> None:
     if tokenizer_path.exists() and config_path.exists():
         return
 
-    tokenizer_url = (
-        "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer.json"
-    )
-    tokenizer_config_url = (
-        "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer_config.json"
-    )
+    tokenizer_url = "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer.json"
+    tokenizer_config_url = "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer_config.json"
 
     if not tokenizer_path.exists():
         response = requests.get(tokenizer_url, stream=True, timeout=30)
@@ -235,13 +228,8 @@ if __name__ == "__main__":
     if use_flash_attention or flash_attention_force:
         verify_flash_attention(force=flash_attention_force, verbose=True)
 
-    try:
-        from src.custom_moe import FixedLLaMAMoE
-        import litgpt.model
-
-        litgpt.model.LLaMAMoE = FixedLLaMAMoE
-    except ImportError:
-        pass
+    apply_runtime_config()
+    patch_flops_measurement()
 
     if grad_checkpointing:
         patch_gradient_checkpointing()
@@ -314,6 +302,9 @@ if __name__ == "__main__":
         )
 
     try:
+        if use_compile:
+            patch_cudagraph_for_compile()
+
         compile_ctx = create_compile_context(
             use_compile=use_compile,
             mode=compile_mode,

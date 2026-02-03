@@ -10,14 +10,6 @@ import yaml
 from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 
-try:
-    from src.custom_moe import FixedLLaMAMoE
-    import litgpt.model
-
-    litgpt.model.LLaMAMoE = FixedLLaMAMoE
-except ImportError:
-    pass
-
 
 STREAMER_JOIN_TIMEOUT_SECONDS = 1.0  # Short timeout to avoid hanging; enough time to flush the token queue.
 
@@ -138,7 +130,7 @@ def generate(
     model.to(device)
     model.eval()
 
-    encoded = tokenizer.encode(prompt, device=device)
+    encoded = tokenizer.encode(prompt, device=torch.device(device))
 
     print("\nGenerating...")
     print("-" * 50)

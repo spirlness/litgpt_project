@@ -66,3 +66,6 @@ lightning_logs/
 .sisyphus/
 
 CLAUDE.md
+
+AGENTS.md
+**/AGENTS.md

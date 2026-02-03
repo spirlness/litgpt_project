@@ -46,7 +46,6 @@ def check_flash_attention() -> FlashAttentionInfo:
     major, minor = torch.cuda.get_device_capability()
     compute_cap = (major, minor)
 
-    # Flash Attention 2 requires Ampere (8.0+) or newer
     if major < 8:
         return FlashAttentionInfo(
             available=False,
@@ -65,7 +64,6 @@ def check_flash_attention() -> FlashAttentionInfo:
     try:
         from torch.nn.attention import SDPBackend, sdpa_kernel
 
-        # Test with a small tensor
         test_q = torch.randn(1, 1, 32, 64, device="cuda", dtype=torch.bfloat16)
 
         for backend_name, backend in [
@@ -143,7 +141,55 @@ def configure_flash_attention(enable: bool = True, disable_math_fallback: bool =
         torch.backends.cuda.enable_math_sdp(True)
 
 
-def patch_cudagraph_overwritten_error():
+def apply_runtime_config() -> None:
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", os.environ["PYTORCH_ALLOC_CONF"])
+    torch.set_float32_matmul_precision("high")
+
+    if torch.cuda.is_available():
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+        torch.backends.cuda.enable_math_sdp(True)
+
+
+def patch_flops_measurement() -> None:
+    """Patch FLOPs measurement to handle MoE routing ops with meta tensors.
+
+    MoE routing uses torch.where/torch.nonzero which don't have proper meta tensor
+    implementations. This patch sets the experimental config flag to allow meta tensor
+    operations to assume all elements are non-zero, enabling FLOPs measurement to work.
+
+    If that fails, falls back to returning 0.0 FLOPs rather than crashing.
+    """
+    # Enable meta tensor support for torch.nonzero (used by MoE routing)
+    try:
+        import torch.fx.experimental._config as fx_config
+
+        fx_config.meta_nonzero_assume_all_nonzero = True
+    except (ImportError, AttributeError):
+        pass
+
+    # Wrap measure_flops to catch any remaining errors and return 0.0 instead of crashing
+    try:
+        import lightning.fabric.utilities.throughput as throughput_module
+
+        _orig_measure_flops = throughput_module.measure_flops
+
+        def _measure_flops_patch(model, forward_fn, loss_fn, *args, **kwargs):
+            try:
+                return _orig_measure_flops(model, forward_fn, loss_fn, *args, **kwargs)
+            except (NotImplementedError, AttributeError, RuntimeError):
+                return 0.0
+
+        throughput_module.measure_flops = _measure_flops_patch
+    except ImportError:
+        pass
+
+
+def patch_cudagraph_for_compile() -> None:
+    if not hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+        return
+
     import litgpt.pretrain
     import litgpt.utils
 
@@ -186,62 +232,7 @@ def patch_cudagraph_overwritten_error():
     litgpt.pretrain.validate = _validate
 
 
-def apply_patches():
-    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", os.environ["PYTORCH_ALLOC_CONF"])
-    torch.set_float32_matmul_precision("high")
-
-    if torch.cuda.is_available():
-        torch.backends.cuda.enable_flash_sdp(True)
-        torch.backends.cuda.enable_mem_efficient_sdp(True)
-        torch.backends.cuda.enable_math_sdp(True)
-
-    try:
-        import torch.fx.experimental._config as fx_config
-
-        fx_config.meta_nonzero_assume_all_nonzero = True
-    except (ImportError, AttributeError):
-        pass
-
-    try:
-        import lightning.fabric.utilities.throughput as throughput_module
-
-        _orig_measure_flops = throughput_module.measure_flops
-
-        def _measure_flops_patch(model, forward_fn, loss_fn, *args, **kwargs):
-            try:
-                return _orig_measure_flops(model, forward_fn, loss_fn, *args, **kwargs)
-            except (NotImplementedError, AttributeError, RuntimeError):
-                return 0.0
-
-        throughput_module.measure_flops = _measure_flops_patch
-    except ImportError:
-        pass
-
-    try:
-        import lightning.fabric.plugins.io.torch_io as torch_io_module
-
-        def _non_atomic_save(checkpoint, path) -> None:
-            torch.save(checkpoint, path)
-
-        setattr(torch_io_module, "_atomic_save", _non_atomic_save)
-    except Exception:
-        pass
-
-    try:
-        import litgpt.model as litgpt_model
-
-        _orig_rmsnorm_forward = litgpt_model.RMSNorm.forward
-
-        def _rmsnorm_forward(self, x):
-            return _orig_rmsnorm_forward(self, x).clone()
-
-        setattr(litgpt_model.RMSNorm, "forward", _rmsnorm_forward)
-    except Exception:
-        pass
-
-
-def patch_gradient_checkpointing():
+def patch_gradient_checkpointing() -> None:
     from litgpt.model import Block
 
     _orig_block_forward = Block.forward
