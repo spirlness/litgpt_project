@@ -21,9 +21,11 @@ from src.utils import (
     start_progress_bar,
     verify_flash_attention,
     configure_flash_attention,
+    patch_cudagraph_overwritten_error,
 )
 
 apply_patches()
+patch_cudagraph_overwritten_error()
 
 
 def load_configs(model_config_path: Path, train_config_path: Path):
@@ -75,7 +77,7 @@ if __name__ == "__main__":
     parser.add_argument("--out-dir", type=Path)
     parser.add_argument("--tokenizer-dir", type=Path)
     parser.add_argument("--precision", type=str)
-    parser.add_argument("--resume", type=str, default=os.environ.get("RESUME"))
+    parser.add_argument("--resume", type=str, default=os.environ.get("RESUME", "auto"))
     parser.add_argument("--optimizer-8bit", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--compile-mode", type=str, choices=["default", "reduce-overhead", "max-autotune"])

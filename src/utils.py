@@ -1,17 +1,18 @@
+import importlib.metadata
+import importlib.util
 import os
-import torch
-import torch.nn.functional as F
 import threading
 import time
-import torch.utils.checkpoint
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional
+
+import torch
+import torch.nn.functional as F
+import torch.utils.checkpoint
 from tqdm import tqdm
 
 
 class FlashAttentionInfo:
-    """Information about Flash Attention availability and status."""
-
     def __init__(
         self,
         available: bool,
@@ -35,11 +36,6 @@ class FlashAttentionInfo:
 
 
 def check_flash_attention() -> FlashAttentionInfo:
-    """Check Flash Attention 2 availability without modifying state.
-
-    Returns:
-        FlashAttentionInfo with availability status and diagnostics.
-    """
     if not torch.cuda.is_available():
         return FlashAttentionInfo(
             available=False,
@@ -58,16 +54,13 @@ def check_flash_attention() -> FlashAttentionInfo:
             reason=f"GPU compute capability {major}.{minor} < 8.0 (Ampere required)",
         )
 
-    # Check for flash_attn package
     flash_attn_version = None
-    try:
-        import flash_attn
+    if importlib.util.find_spec("flash_attn") is not None:
+        try:
+            flash_attn_version = importlib.metadata.version("flash-attn")
+        except importlib.metadata.PackageNotFoundError:
+            flash_attn_version = "unknown"
 
-        flash_attn_version = getattr(flash_attn, "__version__", "unknown")
-    except ImportError:
-        pass
-
-    # Test SDPA backends
     sdpa_backends: dict[str, bool] = {}
     try:
         from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -87,9 +80,7 @@ def check_flash_attention() -> FlashAttentionInfo:
             except Exception:
                 sdpa_backends[backend_name] = False
     except ImportError:
-        # Older PyTorch without SDPBackend enum
         sdpa_backends["FLASH_ATTENTION"] = False
-        sdpa_backends["note"] = "SDPBackend not available in this PyTorch version"
 
     flash_available = sdpa_backends.get("FLASH_ATTENTION", False)
 
@@ -103,22 +94,10 @@ def check_flash_attention() -> FlashAttentionInfo:
 
 
 def verify_flash_attention(force: bool = False, verbose: bool = True) -> FlashAttentionInfo:
-    """Verify Flash Attention 2 is available and optionally enforce it.
-
-    Args:
-        force: If True, raise RuntimeError if Flash Attention is not available.
-        verbose: If True, print diagnostic information.
-
-    Returns:
-        FlashAttentionInfo with availability status.
-
-    Raises:
-        RuntimeError: If force=True and Flash Attention is not available.
-    """
     info = check_flash_attention()
 
     if verbose:
-        print(f"[Flash Attention Check]")
+        print("[Flash Attention Check]")
         if torch.cuda.is_available():
             print(f"  GPU: {torch.cuda.get_device_name()}")
             print(f"  Compute Capability: {info.compute_capability[0]}.{info.compute_capability[1]}")
@@ -133,11 +112,8 @@ def verify_flash_attention(force: bool = False, verbose: bool = True) -> FlashAt
         if info.sdpa_backends:
             print("  SDPA Backends:")
             for backend, available in info.sdpa_backends.items():
-                if backend == "note":
-                    print(f"    Note: {available}")
-                else:
-                    status = "Available" if available else "Not available"
-                    print(f"    - {backend}: {status}")
+                status = "Available" if available else "Not available"
+                print(f"    - {backend}: {status}")
 
         if info.available:
             print("  Status: Flash Attention 2 ENABLED")
@@ -155,12 +131,6 @@ def verify_flash_attention(force: bool = False, verbose: bool = True) -> FlashAt
 
 
 def configure_flash_attention(enable: bool = True, disable_math_fallback: bool = False) -> None:
-    """Configure SDPA backends for optimal Flash Attention usage.
-
-    Args:
-        enable: Enable Flash Attention and Memory Efficient backends.
-        disable_math_fallback: If True, disable Math backend to force optimized kernels.
-    """
     if not torch.cuda.is_available():
         return
 
@@ -171,6 +141,45 @@ def configure_flash_attention(enable: bool = True, disable_math_fallback: bool =
         torch.backends.cuda.enable_math_sdp(False)
     else:
         torch.backends.cuda.enable_math_sdp(True)
+
+
+def patch_cudagraph_overwritten_error():
+    import litgpt.pretrain
+    import litgpt.utils
+
+    _orig_cycle_next = litgpt.utils.CycleIterator.__next__
+
+    def _cycle_next(self):
+        torch.compiler.cudagraph_mark_step_begin()
+        return _orig_cycle_next(self)
+
+    litgpt.utils.CycleIterator.__next__ = _cycle_next
+
+    _orig_validate = litgpt.pretrain.validate
+
+    def _validate(fabric, model, val_dataloader, max_iters, verbose=True):
+        fabric.barrier()
+        if verbose:
+            fabric.print("Validating ...")
+        model.eval()
+
+        losses = []
+        for k, batch in enumerate(val_dataloader):
+            if k >= max_iters:
+                break
+            torch.compiler.cudagraph_mark_step_begin()
+            input_ids = batch[:, 0 : model.max_seq_length].contiguous().long()
+            targets = batch[:, 1 : (model.max_seq_length + 1)].contiguous().long()
+            logits = model(input_ids)
+            loss = litgpt.pretrain.chunked_cross_entropy(logits, targets)
+            losses.append(loss)
+
+        val_loss = torch.stack(losses).mean()
+        model.train()
+        fabric.barrier()
+        return val_loss
+
+    litgpt.pretrain.validate = _validate
 
 
 def apply_patches():
@@ -198,7 +207,7 @@ def apply_patches():
         def _measure_flops_patch(model, forward_fn, loss_fn, *args, **kwargs):
             try:
                 return _orig_measure_flops(model, forward_fn, loss_fn, *args, **kwargs)
-            except (NotImplementedError, AttributeError):
+            except (NotImplementedError, AttributeError, RuntimeError):
                 return 0.0
 
         throughput_module.measure_flops = _measure_flops_patch
@@ -212,6 +221,18 @@ def apply_patches():
             torch.save(checkpoint, path)
 
         setattr(torch_io_module, "_atomic_save", _non_atomic_save)
+    except Exception:
+        pass
+
+    try:
+        import litgpt.model as litgpt_model
+
+        _orig_rmsnorm_forward = litgpt_model.RMSNorm.forward
+
+        def _rmsnorm_forward(self, x):
+            return _orig_rmsnorm_forward(self, x).clone()
+
+        setattr(litgpt_model.RMSNorm, "forward", _rmsnorm_forward)
     except Exception:
         pass
 

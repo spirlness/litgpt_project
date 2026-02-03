@@ -14,9 +14,11 @@ class FixedLLaMAMoE(nn.Module):
         if not self.n_expert_groups:
             self.gate = nn.Linear(config.n_embd, config.n_expert, bias=False)
         else:
-            from litgpt.model import GroupedTopkRouter
+            import importlib
 
-            self.gate = GroupedTopkRouter(config)
+            litgpt_model = importlib.import_module("litgpt.model")
+            router_cls = getattr(litgpt_model, "GroupedTopkRouter")
+            self.gate = router_cls(config)
 
         self.experts = nn.ModuleList(
             LLaMAMLP(config, intermediate_size=config.moe_intermediate_size) for _ in range(config.n_expert)
@@ -45,20 +47,14 @@ class FixedLLaMAMoE(nn.Module):
         if self.routed_scaling_factor != 1.0:
             probs = probs * self.routed_scaling_factor
 
-        expert_indices = indices.unsqueeze(-1) == torch.arange(self.config.n_expert, device=x.device)
-        masks = expert_indices.permute(2, 0, 1)
-
         y = torch.zeros_like(x)
-
-        for expert_idx, mask in enumerate(masks):
-            token_indices = mask.nonzero(as_tuple=True)[0]
-            expert_assignments = mask.nonzero(as_tuple=True)[1]
-
-            if token_indices.numel() > 0:
-                expert_input = x[token_indices]
-                expert_output = self.experts[expert_idx](expert_input)
-                token_probs = probs[token_indices, expert_assignments]
-                y[token_indices] += token_probs.unsqueeze(-1) * expert_output
+        for expert_idx in range(len(self.experts)):
+            expert_mask = indices == expert_idx
+            token_indices, k_indices = torch.where(expert_mask)
+            expert_input = x[token_indices]
+            expert_output = self.experts[expert_idx](expert_input)
+            token_probs = probs[token_indices, k_indices]
+            y.index_add_(0, token_indices, token_probs.unsqueeze(-1) * expert_output)
 
         y = y.view(B, T, C)
 
