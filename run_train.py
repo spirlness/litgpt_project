@@ -63,6 +63,37 @@ def create_compile_context(
                     torch.compiler.cudagraph_mark_step_begin()
                 return self.compiled(*call_args, **call_kwargs)
 
+            def parameters(self, recurse: bool = True):
+                return self.compiled.parameters(recurse=recurse)
+
+            def named_parameters(self, prefix: str = "", recurse: bool = True):
+                return self.compiled.named_parameters(prefix=prefix, recurse=recurse)
+
+            def buffers(self, recurse: bool = True):
+                return self.compiled.buffers(recurse=recurse)
+
+            def named_buffers(self, prefix: str = "", recurse: bool = True):
+                return self.compiled.named_buffers(prefix=prefix, recurse=recurse)
+
+            def modules(self):
+                return self.compiled.modules()
+
+            def named_modules(self, memo=None, prefix: str = "", remove_duplicate: bool = True):
+                return self.compiled.named_modules(memo=memo, prefix=prefix, remove_duplicate=remove_duplicate)
+
+            def state_dict(self, destination=None, prefix: str = "", keep_vars: bool = False):
+                return self.compiled.state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
+
+            def load_state_dict(self, state_dict, strict: bool = True):
+                return self.compiled.load_state_dict(state_dict, strict=strict)
+
+            def train(self, mode: bool = True):
+                self.compiled.train(mode)
+                return self
+
+            def eval(self):
+                return self.train(False)
+
             def __getattr__(self, name):
                 try:
                     return super().__getattr__(name)
