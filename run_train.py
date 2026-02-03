@@ -1,9 +1,11 @@
 import sys
 import os
+import shutil
 import argparse
 import threading
 import contextlib
 import yaml
+import requests
 from pathlib import Path
 from typing import Optional, Union, Literal
 from functools import partial, wraps
@@ -74,6 +76,50 @@ def get_optimizer_config(use_8bit: bool = False):
     return {"class_path": "torch.optim.AdamW", "init_args": {"lr": 0.0003, "weight_decay": 0.01}}
 
 
+def ensure_smoke_text_data(data_dir: Path) -> None:
+    train_dir = data_dir / "train"
+    val_dir = data_dir / "val"
+    train_dir.mkdir(parents=True, exist_ok=True)
+    val_dir.mkdir(parents=True, exist_ok=True)
+    tokenized_train_dir = train_dir / "train"
+    tokenized_val_dir = val_dir / "val"
+    shutil.rmtree(tokenized_train_dir, ignore_errors=True)
+    shutil.rmtree(tokenized_val_dir, ignore_errors=True)
+
+    sample_sentence = "Once upon a time, a small model learned to run on a tiny dataset. "
+    sample_text = (sample_sentence * 200).strip() + "\n"
+    (train_dir / "sample.txt").write_text(sample_text, encoding="utf-8")
+    (val_dir / "sample.txt").write_text(sample_text, encoding="utf-8")
+
+
+def ensure_smoke_tokenizer(tokenizer_dir: Path) -> None:
+    tokenizer_dir.mkdir(parents=True, exist_ok=True)
+    tokenizer_path = tokenizer_dir / "tokenizer.json"
+    config_path = tokenizer_dir / "tokenizer_config.json"
+    if tokenizer_path.exists() and config_path.exists():
+        return
+
+    tokenizer_url = (
+        "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer.json"
+    )
+    tokenizer_config_url = (
+        "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer_config.json"
+    )
+
+    if not tokenizer_path.exists():
+        response = requests.get(tokenizer_url, stream=True, timeout=30)
+        response.raise_for_status()
+        with tokenizer_path.open("wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+    if not config_path.exists():
+        response = requests.get(tokenizer_config_url, stream=True, timeout=30)
+        response.raise_for_status()
+        with config_path.open("wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train LitGPT MoE model")
     parser.add_argument("--model-config", type=Path, default=Path("model_config.yaml"))
@@ -96,6 +142,11 @@ if __name__ == "__main__":
     parser.add_argument("--logger", type=str, choices=["csv", "wandb", "tensorboard"])
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction)
     parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="Run a minimal CPU-friendly training sanity check with tiny data/tokenizer.",
+    )
 
     args, _ = parser.parse_known_args()
 
@@ -121,6 +172,21 @@ if __name__ == "__main__":
     if args.precision:
         train_cfg_raw["precision"] = args.precision
 
+    if args.smoke_test:
+        train_cfg_raw["train"]["micro_batch_size"] = 1
+        train_cfg_raw["train"]["global_batch_size"] = 1
+        train_cfg_raw["train"]["max_tokens"] = 64
+        train_cfg_raw["train"]["max_seq_length"] = 64
+        train_cfg_raw["precision"] = "32-true"
+        train_cfg_raw["logger_name"] = "csv"
+        smoke_out_dir = Path("checkpoints_smoke")
+        shutil.rmtree(smoke_out_dir, ignore_errors=True)
+        train_cfg_raw["out_dir"] = str(smoke_out_dir)
+        train_cfg_raw["tokenizer_dir"] = str(Path("data/tokenizer"))
+        args.optimizer_8bit = False
+        ensure_smoke_text_data(Path("data/custom_text"))
+        ensure_smoke_tokenizer(Path(train_cfg_raw["tokenizer_dir"]))
+
     grad_checkpointing = args.gradient_checkpointing
     if grad_checkpointing is None:
         grad_checkpointing = train_cfg_raw["train"].get("gradient_checkpointing", False)
@@ -134,7 +200,9 @@ if __name__ == "__main__":
     if env_compile is not None:
         env_compile = env_compile.lower() in ("1", "true", "yes", "on")
 
-    if args.compile is not None:
+    if args.smoke_test:
+        use_compile = False
+    elif args.compile is not None:
         use_compile = args.compile
     elif env_compile is not None:
         use_compile = env_compile
@@ -148,10 +216,18 @@ if __name__ == "__main__":
     compile_fullgraph = (
         args.compile_fullgraph if args.compile_fullgraph is not None else opt_cfg.get("compile_fullgraph", False)
     )
-    use_flash_attention = args.flash_attention if args.flash_attention is not None else opt_cfg.get("flash_attention", False)
-    flash_attention_force = (
-        args.flash_attention_force if args.flash_attention_force is not None else opt_cfg.get("flash_attention_force", False)
-    )
+    if args.smoke_test:
+        use_flash_attention = False
+        flash_attention_force = False
+    else:
+        use_flash_attention = (
+            args.flash_attention if args.flash_attention is not None else opt_cfg.get("flash_attention", False)
+        )
+        flash_attention_force = (
+            args.flash_attention_force
+            if args.flash_attention_force is not None
+            else opt_cfg.get("flash_attention_force", False)
+        )
     disable_math_fallback = opt_cfg.get("disable_math_fallback", False)
 
     configure_flash_attention(enable=True, disable_math_fallback=disable_math_fallback)

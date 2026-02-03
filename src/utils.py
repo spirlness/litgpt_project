@@ -174,7 +174,11 @@ def patch_cudagraph_overwritten_error():
             loss = litgpt.pretrain.chunked_cross_entropy(logits, targets)
             losses.append(loss)
 
-        val_loss = torch.stack(losses).mean()
+        if losses:
+            val_loss = torch.stack(losses).mean()
+        else:
+            device = next(model.parameters()).device
+            val_loss = torch.tensor(float("nan"), device=device)
         model.train()
         fabric.barrier()
         return val_loss
