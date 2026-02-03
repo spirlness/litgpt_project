@@ -5,7 +5,16 @@ from pathlib import Path
 import requests
 import yaml
 
-from wandb_dataset import log_dataset_to_wandb
+log_dataset_to_wandb = None
+HAS_WANDB_DATASET = False
+
+try:
+    import wandb_dataset  # type: ignore
+
+    log_dataset_to_wandb = wandb_dataset.log_dataset_to_wandb
+    HAS_WANDB_DATASET = True
+except ImportError:
+    pass
 
 
 def _ensure_data_directories(data_path: Path) -> None:
@@ -149,16 +158,19 @@ if __name__ == "__main__":
     print("=" * 60)
 
     if args.log_to_wandb:
-        if not args.wandb_project:
-            raise SystemExit("--log-to-wandb requires --wandb-project or WANDB_PROJECT")
-        print("\nUploading dataset to Weights & Biases as an Artifact...")
-        log_dataset_to_wandb(
-            data_dir=data_path,
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            artifact_name=args.wandb_artifact,
-            aliases=[a for a in args.wandb_alias if a],
-            tags=[t for t in args.wandb_tag if t],
-            run_name=args.wandb_run_name,
-        )
-        print("W&B dataset Artifact upload complete.")
+        if not HAS_WANDB_DATASET:
+            print("Warning: wandb_dataset module not found. Skipping W&B upload.")
+        elif not args.wandb_project:
+            raise SystemExit("--log-to-wandb requires wandb_dataset module and --wandb-project or WANDB_PROJECT")
+        elif log_dataset_to_wandb is not None:
+            print("\nUploading dataset to Weights & Biases as an Artifact...")
+            log_dataset_to_wandb(
+                data_dir=data_path,
+                project=args.wandb_project,
+                entity=args.wandb_entity,
+                artifact_name=args.wandb_artifact,
+                aliases=[a for a in args.wandb_alias if a],
+                tags=[t for t in args.wandb_tag if t],
+                run_name=args.wandb_run_name,
+            )
+            print("W&B dataset Artifact upload complete.")

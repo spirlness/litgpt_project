@@ -20,6 +20,19 @@ train:
   max_norm: 1.0
   max_seq_length: 2048
 
+# Performance optimization options
+optimization:
+  # torch.compile settings
+  compile: true
+  compile_mode: default  # Options: default, reduce-overhead, max-autotune
+  compile_dynamic: false      # Enable dynamic shapes (for variable sequence lengths)
+  compile_fullgraph: false    # Force full graph compilation (errors on graph breaks)
+
+  # Flash Attention settings
+  flash_attention: true       # Verify Flash Attention 2 is active
+  flash_attention_force: false  # Error if Flash Attention is not available
+  disable_math_fallback: false  # Disable Math SDP fallback (force optimized kernels)
+
 
 logger_name: csv
 

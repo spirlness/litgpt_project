@@ -5,7 +5,8 @@ import threading
 import contextlib
 import yaml
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Literal
+from functools import partial
 from unittest.mock import patch
 
 import torch
@@ -14,7 +15,13 @@ from litgpt.pretrain import setup
 from litgpt.args import TrainArgs, LogArgs
 from litgpt.data import TextFiles
 
-from src.utils import apply_patches, patch_gradient_checkpointing, start_progress_bar
+from src.utils import (
+    apply_patches,
+    patch_gradient_checkpointing,
+    start_progress_bar,
+    verify_flash_attention,
+    configure_flash_attention,
+)
 
 apply_patches()
 
@@ -27,14 +34,32 @@ def load_configs(model_config_path: Path, train_config_path: Path):
     return model_cfg, train_cfg
 
 
+def create_compile_context(
+    use_compile: bool,
+    mode: Literal["default", "reduce-overhead", "max-autotune"],
+    dynamic: bool,
+    fullgraph: bool,
+):
+    if not use_compile:
+        return patch("torch.compile", side_effect=lambda m, *a, **kw: m)
+
+    _orig_compile = torch.compile
+
+    def _custom_compile(model, *args, **kwargs):
+        kwargs.setdefault("mode", mode)
+        kwargs.setdefault("dynamic", dynamic)
+        kwargs.setdefault("fullgraph", fullgraph)
+        return _orig_compile(model, *args, **kwargs)
+
+    return patch("litgpt.pretrain.torch.compile", side_effect=_custom_compile)
+
+
 def get_optimizer_config(use_8bit: bool = False):
     if use_8bit:
-        try:
-            import bitsandbytes
+        import importlib.util
 
+        if importlib.util.find_spec("bitsandbytes") is not None:
             return {"class_path": "bitsandbytes.optim.AdamW8bit", "init_args": {"lr": 0.0003, "weight_decay": 0.01}}
-        except ImportError:
-            pass
 
     return {"class_path": "torch.optim.AdamW", "init_args": {"lr": 0.0003, "weight_decay": 0.01}}
 
@@ -52,7 +77,12 @@ if __name__ == "__main__":
     parser.add_argument("--precision", type=str)
     parser.add_argument("--resume", type=str, default=os.environ.get("RESUME"))
     parser.add_argument("--optimizer-8bit", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--compile-mode", type=str, choices=["default", "reduce-overhead", "max-autotune"])
+    parser.add_argument("--compile-dynamic", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--compile-fullgraph", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--flash-attention", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--flash-attention-force", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--logger", type=str, choices=["csv", "wandb", "tensorboard"])
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction)
     parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
@@ -86,6 +116,24 @@ if __name__ == "__main__":
         grad_checkpointing = train_cfg_raw["train"].get("gradient_checkpointing", False)
 
     train_cfg_raw["train"].pop("gradient_checkpointing", None)
+
+    opt_cfg = train_cfg_raw.get("optimization", {})
+    use_compile = args.compile if args.compile is not None else opt_cfg.get("compile", False)
+    compile_mode = args.compile_mode or opt_cfg.get("compile_mode", "default")
+    compile_dynamic = args.compile_dynamic if args.compile_dynamic is not None else opt_cfg.get("compile_dynamic", False)
+    compile_fullgraph = (
+        args.compile_fullgraph if args.compile_fullgraph is not None else opt_cfg.get("compile_fullgraph", False)
+    )
+    use_flash_attention = args.flash_attention if args.flash_attention is not None else opt_cfg.get("flash_attention", False)
+    flash_attention_force = (
+        args.flash_attention_force if args.flash_attention_force is not None else opt_cfg.get("flash_attention_force", False)
+    )
+    disable_math_fallback = opt_cfg.get("disable_math_fallback", False)
+
+    configure_flash_attention(enable=True, disable_math_fallback=disable_math_fallback)
+
+    if use_flash_attention or flash_attention_force:
+        verify_flash_attention(force=flash_attention_force, verbose=True)
 
     try:
         from src.custom_moe import FixedLLaMAMoE
@@ -166,11 +214,11 @@ if __name__ == "__main__":
         )
 
     try:
-        # LitGPT unconditionally calls torch.compile. We mock it if compilation is disabled.
-        compile_ctx = (
-            patch("torch.compile", side_effect=lambda m, *args, **kwargs: m)
-            if not args.compile
-            else contextlib.nullcontext()
+        compile_ctx = create_compile_context(
+            use_compile=use_compile,
+            mode=compile_mode,
+            dynamic=compile_dynamic,
+            fullgraph=compile_fullgraph,
         )
         with compile_ctx:
             setup(

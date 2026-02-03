@@ -1,11 +1,176 @@
 import os
 import torch
+import torch.nn.functional as F
 import threading
 import time
 import torch.utils.checkpoint
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Literal
 from tqdm import tqdm
+
+
+class FlashAttentionInfo:
+    """Information about Flash Attention availability and status."""
+
+    def __init__(
+        self,
+        available: bool,
+        compute_capability: tuple[int, int],
+        flash_attn_version: Optional[str] = None,
+        sdpa_backends: Optional[dict[str, bool]] = None,
+        reason: Optional[str] = None,
+    ):
+        self.available = available
+        self.compute_capability = compute_capability
+        self.flash_attn_version = flash_attn_version
+        self.sdpa_backends = sdpa_backends or {}
+        self.reason = reason
+
+    def __repr__(self) -> str:
+        return (
+            f"FlashAttentionInfo(available={self.available}, "
+            f"compute_capability={self.compute_capability}, "
+            f"flash_attn_version={self.flash_attn_version!r})"
+        )
+
+
+def check_flash_attention() -> FlashAttentionInfo:
+    """Check Flash Attention 2 availability without modifying state.
+
+    Returns:
+        FlashAttentionInfo with availability status and diagnostics.
+    """
+    if not torch.cuda.is_available():
+        return FlashAttentionInfo(
+            available=False,
+            compute_capability=(0, 0),
+            reason="CUDA not available",
+        )
+
+    major, minor = torch.cuda.get_device_capability()
+    compute_cap = (major, minor)
+
+    # Flash Attention 2 requires Ampere (8.0+) or newer
+    if major < 8:
+        return FlashAttentionInfo(
+            available=False,
+            compute_capability=compute_cap,
+            reason=f"GPU compute capability {major}.{minor} < 8.0 (Ampere required)",
+        )
+
+    # Check for flash_attn package
+    flash_attn_version = None
+    try:
+        import flash_attn
+
+        flash_attn_version = getattr(flash_attn, "__version__", "unknown")
+    except ImportError:
+        pass
+
+    # Test SDPA backends
+    sdpa_backends: dict[str, bool] = {}
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+
+        # Test with a small tensor
+        test_q = torch.randn(1, 1, 32, 64, device="cuda", dtype=torch.bfloat16)
+
+        for backend_name, backend in [
+            ("FLASH_ATTENTION", SDPBackend.FLASH_ATTENTION),
+            ("EFFICIENT_ATTENTION", SDPBackend.EFFICIENT_ATTENTION),
+            ("MATH", SDPBackend.MATH),
+        ]:
+            try:
+                with sdpa_kernel(backend):
+                    F.scaled_dot_product_attention(test_q, test_q, test_q, is_causal=True)
+                sdpa_backends[backend_name] = True
+            except Exception:
+                sdpa_backends[backend_name] = False
+    except ImportError:
+        # Older PyTorch without SDPBackend enum
+        sdpa_backends["FLASH_ATTENTION"] = False
+        sdpa_backends["note"] = "SDPBackend not available in this PyTorch version"
+
+    flash_available = sdpa_backends.get("FLASH_ATTENTION", False)
+
+    return FlashAttentionInfo(
+        available=flash_available,
+        compute_capability=compute_cap,
+        flash_attn_version=flash_attn_version,
+        sdpa_backends=sdpa_backends,
+        reason=None if flash_available else "FLASH_ATTENTION backend test failed",
+    )
+
+
+def verify_flash_attention(force: bool = False, verbose: bool = True) -> FlashAttentionInfo:
+    """Verify Flash Attention 2 is available and optionally enforce it.
+
+    Args:
+        force: If True, raise RuntimeError if Flash Attention is not available.
+        verbose: If True, print diagnostic information.
+
+    Returns:
+        FlashAttentionInfo with availability status.
+
+    Raises:
+        RuntimeError: If force=True and Flash Attention is not available.
+    """
+    info = check_flash_attention()
+
+    if verbose:
+        print(f"[Flash Attention Check]")
+        if torch.cuda.is_available():
+            print(f"  GPU: {torch.cuda.get_device_name()}")
+            print(f"  Compute Capability: {info.compute_capability[0]}.{info.compute_capability[1]}")
+        else:
+            print("  CUDA: Not available")
+
+        if info.flash_attn_version:
+            print(f"  flash_attn package: v{info.flash_attn_version}")
+        else:
+            print("  flash_attn package: Not installed (using PyTorch SDPA)")
+
+        if info.sdpa_backends:
+            print("  SDPA Backends:")
+            for backend, available in info.sdpa_backends.items():
+                if backend == "note":
+                    print(f"    Note: {available}")
+                else:
+                    status = "Available" if available else "Not available"
+                    print(f"    - {backend}: {status}")
+
+        if info.available:
+            print("  Status: Flash Attention 2 ENABLED")
+        else:
+            print(f"  Status: Flash Attention 2 NOT available ({info.reason})")
+
+    if force and not info.available:
+        raise RuntimeError(
+            f"Flash Attention 2 is required but not available: {info.reason}. "
+            f"Compute capability: {info.compute_capability[0]}.{info.compute_capability[1]}. "
+            "Ensure you have an Ampere+ GPU and PyTorch with CUDA support."
+        )
+
+    return info
+
+
+def configure_flash_attention(enable: bool = True, disable_math_fallback: bool = False) -> None:
+    """Configure SDPA backends for optimal Flash Attention usage.
+
+    Args:
+        enable: Enable Flash Attention and Memory Efficient backends.
+        disable_math_fallback: If True, disable Math backend to force optimized kernels.
+    """
+    if not torch.cuda.is_available():
+        return
+
+    torch.backends.cuda.enable_flash_sdp(enable)
+    torch.backends.cuda.enable_mem_efficient_sdp(enable)
+
+    if disable_math_fallback:
+        torch.backends.cuda.enable_math_sdp(False)
+    else:
+        torch.backends.cuda.enable_math_sdp(True)
 
 
 def apply_patches():
