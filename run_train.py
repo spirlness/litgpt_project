@@ -120,7 +120,21 @@ if __name__ == "__main__":
     train_cfg_raw["train"].pop("gradient_checkpointing", None)
 
     opt_cfg = train_cfg_raw.get("optimization", {})
-    use_compile = args.compile if args.compile is not None else opt_cfg.get("compile", False)
+
+    # Check environment variable for compile override
+    env_compile = os.environ.get("TORCH_COMPILE")
+    if env_compile is not None:
+        env_compile = env_compile.lower() in ("1", "true", "yes", "on")
+
+    if args.compile is not None:
+        use_compile = args.compile
+    elif env_compile is not None:
+        use_compile = env_compile
+    else:
+        use_compile = opt_cfg.get("compile", False)
+
+    print(f"Compilation {'ENABLED' if use_compile else 'DISABLED'}", flush=True)
+
     compile_mode = args.compile_mode or opt_cfg.get("compile_mode", "default")
     compile_dynamic = args.compile_dynamic if args.compile_dynamic is not None else opt_cfg.get("compile_dynamic", False)
     compile_fullgraph = (
