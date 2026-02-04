@@ -12,7 +12,7 @@ try:
     import transformers
 
     print(f"torch: {torch.__version__}")
-    print("litgpt: imported")
+    print(f"litgpt: imported from {litgpt.__file__}")
     print(f"lightning: {lightning.__version__}")
     print(f"transformers: {transformers.__version__}")
     print(f"datasets: {datasets.__version__}")
