@@ -18,7 +18,7 @@ data:
 train:
   global_batch_size: 128
   log_interval: 1
-  max_tokens: 320000
+  max_tokens: 1000000000
   lr_warmup_steps: 10
   micro_batch_size: 4
   save_interval: 1000

@@ -70,6 +70,14 @@ def save_checkpoint(
         },
     )
 
+    if fabric.is_global_zero:
+        import shutil
+
+        all_checkpoints = sorted(out_dir.glob("step-*"))
+        for old_checkpoint in all_checkpoints[:-1]:
+            if old_checkpoint.is_dir():
+                shutil.rmtree(old_checkpoint)
+
 
 def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     model_cfg = load_yaml(model_cfg_path)
