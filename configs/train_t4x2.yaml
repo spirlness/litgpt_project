@@ -3,8 +3,8 @@ out_dir: ./checkpoints
 precision: 16-mixed
 tokenizer_dir: ./data/tokenizer
 
-# Multi-GPU settings (disabled due to NCCL timeout on Kaggle)
-devices: 1
+# Multi-GPU settings with NCCL optimization for Kaggle
+devices: 2
 num_nodes: 1
 
 data:
@@ -20,7 +20,7 @@ train:
   max_tokens: 320000
   lr_warmup_steps: 10
   micro_batch_size: 16
-  save_interval: 500
+  save_interval: 1000
   gradient_checkpointing: false
   max_norm: 1.0
   max_seq_length: 512
