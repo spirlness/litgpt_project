@@ -50,15 +50,12 @@ def create_compile_context(
         kwargs.setdefault("mode", mode)
         kwargs.setdefault("dynamic", dynamic)
         kwargs.setdefault("fullgraph", fullgraph)
-        compiled = _orig_compile(model, *args, **kwargs)
-
-        @wraps(model)
-        def _wrapped(*call_args, **call_kwargs):
-            if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
-                torch.compiler.cudagraph_mark_step_begin()
-            return compiled(*call_args, **call_kwargs)
-
-        return _wrapped
+        # We must return the compiled model directly (OptimizedModule) so that
+        # fabric.setup() can recognize it as a module. Wrapping it in a function
+        # breaks fabric.setup().
+        # cudagraph_mark_step_begin is handled via patch_cudagraph_for_compile()
+        # which patches the data iterator and validation loop.
+        return _orig_compile(model, *args, **kwargs)
 
     return patch("litgpt.pretrain.torch.compile", side_effect=_custom_compile)
 
