@@ -157,6 +157,30 @@ if __name__ == "__main__":
     print(f"Validation data: {data_module.out_path_val}")
     print("=" * 60)
 
+    # 验证生成的index.json文件
+    print("\nVerifying generated index.json files...")
+    try:
+        from generate_index_json import verify_index_json
+
+        if verify_index_json(data_module.out_path_train):
+            print("✓ Training data index.json verified")
+        else:
+            print("⚠ Regenerating training data index.json...")
+            from generate_index_json import generate_index_json
+
+            generate_index_json(data_module.out_path_train, "train", 1000)
+
+        if verify_index_json(data_module.out_path_val):
+            print("✓ Validation data index.json verified")
+        else:
+            print("⚠ Regenerating validation data index.json...")
+            from generate_index_json import generate_index_json
+
+            generate_index_json(data_module.out_path_val, "val", 200)
+    except Exception as e:
+        print(f"Warning: Could not verify index.json files: {e}")
+        print("This may not affect training if files were generated correctly.")
+
     if args.log_to_wandb:
         if not HAS_WANDB_DATASET:
             print("Warning: wandb_dataset module not found. Skipping W&B upload.")

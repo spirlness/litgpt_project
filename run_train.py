@@ -13,7 +13,9 @@ from unittest.mock import patch
 import torch
 from litgpt.config import Config
 from litgpt.args import TrainArgs, LogArgs
-from litgpt.data import TextFiles
+
+# from litgpt.data import TextFiles
+from fixed_text_files import FixedTextFiles as TextFiles
 
 from src.utils import (
     apply_runtime_config,
@@ -331,6 +333,8 @@ if __name__ == "__main__":
                 log=log_args,
                 optimizer=get_optimizer_config(args.optimizer_8bit),
                 resume=resume_val,
+                devices=train_cfg_raw.get("devices", "auto"),
+                num_nodes=train_cfg_raw.get("num_nodes", 1),
             )
     finally:
         stop_event.set()
