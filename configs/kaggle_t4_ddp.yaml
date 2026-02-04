@@ -21,7 +21,7 @@ train:
   max_tokens: 1000000000
   lr_warmup_steps: 10
   micro_batch_size: 4
-  save_interval: 1000
+  save_interval: 250
   gradient_checkpointing: true
   max_norm: 1.0
   max_seq_length: 512
