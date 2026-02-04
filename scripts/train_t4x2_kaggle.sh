@@ -15,6 +15,8 @@ export NCCL_DEBUG=INFO
 export NCCL_P2P_DISABLE=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=3600
+export NCCL_SHM_DISABLE=1
+export NCCL_SOCKET_IFNAME=eth0
 
 # Force gradient checkpointing off (reliable on Kaggle with dynamic sequence lengths)
 export DISABLE_GRADIENT_CHECKPOINTING=1
