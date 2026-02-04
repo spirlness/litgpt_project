@@ -1,15 +1,14 @@
 # Copyright Lightning AI. Licensed under the Apache License 2.0, see LICENSE file.
 import glob
-import os
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Optional
 
-from torch.utils.data import DataLoader
-
+import torch
 from litgpt.data import DataModule
 from litgpt.tokenizer import Tokenizer
+from torch.utils.data import DataLoader
 
 
 @dataclass
@@ -79,7 +78,7 @@ class FixedTextFiles(DataModule):
             if self.tokenizer is not None:
                 validate_tokenizer(self.tokenizer)
             optimize(
-                fn=partial(tokenize, tokenizer=self.tokenizer) if self.tokenizer is not None else tokenize,
+                fn=partial(tokenize, tokenizer=self.tokenizer),
                 inputs=train_files,
                 output_dir=str(self.out_path_train),
                 num_workers=use_workers,
@@ -99,7 +98,7 @@ class FixedTextFiles(DataModule):
             if self.tokenizer is not None:
                 validate_tokenizer(self.tokenizer)
             optimize(
-                fn=partial(tokenize, tokenizer=self.tokenizer) if self.tokenizer is not None else tokenize,
+                fn=partial(tokenize, tokenizer=self.tokenizer),
                 inputs=val_files,
                 output_dir=str(self.out_path_val),
                 num_workers=use_workers,
@@ -123,8 +122,20 @@ class FixedTextFiles(DataModule):
             shuffle=True,
         )
 
+        pad_id = int(self.tokenizer.eos_id) if self.tokenizer is not None and self.tokenizer.eos_id is not None else 0
+        collate_fn = partial(
+            collate_fixed_length,
+            batch_size=self.batch_size,
+            max_seq_length=self.max_seq_length,
+            pad_id=pad_id,
+        )
         train_dataloader = StreamingDataLoader(
-            train_dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers, drop_last=True
+            train_dataset,
+            batch_size=self.batch_size,
+            pin_memory=True,
+            num_workers=self.num_workers,
+            drop_last=True,
+            collate_fn=collate_fn,
         )
         return train_dataloader
 
@@ -136,17 +147,47 @@ class FixedTextFiles(DataModule):
             item_loader=TokensLoader(block_size=self.max_seq_length),
             shuffle=True,
         )
+        pad_id = int(self.tokenizer.eos_id) if self.tokenizer is not None and self.tokenizer.eos_id is not None else 0
+        collate_fn = partial(
+            collate_fixed_length,
+            batch_size=self.batch_size,
+            max_seq_length=self.max_seq_length,
+            pad_id=pad_id,
+        )
         val_dataloader = StreamingDataLoader(
-            val_dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers, drop_last=True
+            val_dataset,
+            batch_size=self.batch_size,
+            pin_memory=True,
+            num_workers=self.num_workers,
+            drop_last=True,
+            collate_fn=collate_fn,
         )
         return val_dataloader
 
 
-def tokenize(filename: str, tokenizer: Tokenizer):
+def tokenize(filename: str, tokenizer: Optional[Tokenizer]):
+    if tokenizer is None:
+        raise ValueError("Tokenizer为None。如果您通过`litgpt pretrain`使用此数据模块，请提供有效的`--tokenizer_dir`路径。")
     with open(filename, encoding="utf-8") as file:
         text = file.read()
     text = text.strip()
     yield tokenizer.encode(text, bos=True, eos=False)
+
+
+def collate_fixed_length(batch: list, *, batch_size: int, max_seq_length: int, pad_id: int) -> torch.Tensor:
+    output = torch.full((batch_size, max_seq_length), pad_id, dtype=torch.long)
+    if not batch:
+        return output
+    for row, item in enumerate(batch[:batch_size]):
+        tokens = item
+        if isinstance(tokens, (tuple, list)) and len(tokens) == 1 and not isinstance(tokens[0], (int, bool)):
+            tokens = tokens[0]
+        tokens_tensor = torch.as_tensor(tokens, dtype=torch.long).flatten()
+        if tokens_tensor.numel() == 0:
+            continue
+        tokens_tensor = tokens_tensor[:max_seq_length]
+        output[row, : tokens_tensor.numel()] = tokens_tensor
+    return output
 
 
 def validate_tokenizer(tokenizer: Tokenizer) -> None:
