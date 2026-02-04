@@ -3,8 +3,8 @@ out_dir: ./checkpoints
 precision: 16-mixed
 tokenizer_dir: ./data/tokenizer
 
-# Multi-GPU settings
-devices: 2
+# Multi-GPU settings (disabled due to NCCL timeout on Kaggle)
+devices: 1
 num_nodes: 1
 
 data:
@@ -15,7 +15,7 @@ data:
     num_workers: 4
 
 train:
-  global_batch_size: 256
+  global_batch_size: 128
   log_interval: 1
   max_tokens: 320000
   lr_warmup_steps: 10
