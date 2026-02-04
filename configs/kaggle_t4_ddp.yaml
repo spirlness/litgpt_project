@@ -20,7 +20,7 @@ train:
   log_interval: 1
   max_tokens: 320000
   lr_warmup_steps: 10
-  micro_batch_size: 16
+  micro_batch_size: 4
   save_interval: 1000
   gradient_checkpointing: false
   max_norm: 1.0
