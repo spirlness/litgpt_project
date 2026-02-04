@@ -238,7 +238,7 @@ if __name__ == "__main__":
         patch_gradient_checkpointing()
         print("Enabled gradient checkpointing via Block.forward patch")
 
-    model_config = Config(**model_cfg_raw)
+    model_config = Config(**data=model_cfg_raw)
 
     data_module = TextFiles(
         train_data_path=Path(train_cfg_raw["data"]["init_args"]["train_data_path"]),
@@ -318,7 +318,6 @@ if __name__ == "__main__":
         )
         with compile_ctx:
             from litgpt.pretrain import setup
-
             setup(
                 model_name=model_cfg_raw["name"],
                 model_config=model_config,
