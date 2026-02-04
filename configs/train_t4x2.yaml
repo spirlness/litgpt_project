@@ -1,6 +1,6 @@
 # T4 x2 (15GB each) optimized config
 out_dir: ./checkpoints
-precision: bf16-mixed
+precision: 16-mixed
 tokenizer_dir: ./data/tokenizer
 
 # Multi-GPU settings
@@ -19,9 +19,9 @@ train:
   log_interval: 1
   max_tokens: 320000
   lr_warmup_steps: 10
-  micro_batch_size: 16
+  micro_batch_size: 8
   save_interval: 500
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   max_norm: 1.0
   max_seq_length: 512
 
