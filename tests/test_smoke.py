@@ -52,11 +52,17 @@ def test_import_entrypoints() -> None:
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-    import run_train
-    import prepare_data
-    import generate
     import evaluate
+    import generate
+    import prepare_data
+    import run_train
     from src import utils
+
+    assert evaluate
+    assert generate
+    assert prepare_data
+    assert run_train
+    assert utils
 
 
 @pytest.mark.skipif(CI, reason="CI runners are GPU-free and may not support bitsandbytes runtime")

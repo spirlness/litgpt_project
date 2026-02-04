@@ -10,7 +10,6 @@ import yaml
 from litgpt import GPT, Config
 from litgpt.tokenizer import Tokenizer
 
-
 STREAMER_JOIN_TIMEOUT_SECONDS = 1.0  # Short timeout to avoid hanging; enough time to flush the token queue.
 
 

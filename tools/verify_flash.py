@@ -20,12 +20,6 @@ def verify_flash_attention():
         print("flash_attn package not found.")
 
     # Test SDPA with Flash Attention backend explicitly
-    B, H, T, D = 2, 8, 1024, 64
-    dtype = torch.bfloat16  # Flash Attention prefers bf16 or f16
-    q = torch.randn(B, H, T, D, device="cuda", dtype=dtype, requires_grad=True)
-    k = torch.randn(B, H, T, D, device="cuda", dtype=dtype, requires_grad=True)
-    v = torch.randn(B, H, T, D, device="cuda", dtype=dtype, requires_grad=True)
-
     # Check available backends in torch
     try:
         from torch.nn.attention import SDPBackend, sdpa_kernel
