@@ -20,7 +20,7 @@ from litgpt import Config, GPT
 from litgpt.tokenizer import Tokenizer
 
 from fixed_text_files import FixedTextFiles
-from src.utils import patch_gradient_checkpointing, restore_gradient_checkpointing
+from src.utils import patch_gradient_checkpointing
 
 
 def load_yaml(path: Path) -> dict:
@@ -97,8 +97,6 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     if grad_checkpointing:
         patch_gradient_checkpointing()
         fabric.print("Enabled gradient checkpointing via Block.forward patch")
-    else:
-        restore_gradient_checkpointing()
 
     out_dir = Path(train_cfg.get("out_dir", "checkpoints"))
     tokenizer_dir = Path(train_cfg.get("tokenizer_dir", "data/tokenizer"))

@@ -21,7 +21,7 @@ train:
   lr_warmup_steps: 10
   micro_batch_size: 16
   save_interval: 1000
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   max_norm: 1.0
   max_seq_length: 512
 
