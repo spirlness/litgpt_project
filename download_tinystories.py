@@ -1,8 +1,7 @@
-import os
 from pathlib import Path
-from tqdm import tqdm
 
 import datasets
+from tqdm import tqdm
 
 
 def download_tinystories_streaming(output_dir: Path, num_train: int = 10000, num_val: int = 2000):
