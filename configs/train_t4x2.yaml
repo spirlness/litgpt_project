@@ -34,7 +34,7 @@ resume: auto
 # Performance optimization options
 optimization:
   # torch.compile settings
-  compile: true
+  compile: false
   compile_mode: reduce-overhead
   compile_dynamic: true
   compile_fullgraph: false
