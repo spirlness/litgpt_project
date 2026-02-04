@@ -18,9 +18,6 @@ export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=3600
 export NCCL_SHM_DISABLE=1
 export NCCL_SOCKET_IFNAME=eth0
 
-# Force gradient checkpointing off (reliable on Kaggle with dynamic sequence lengths)
-export DISABLE_GRADIENT_CHECKPOINTING=1
-
 # PyTorch alloc config
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
@@ -29,4 +26,4 @@ export TORCH_COMPILE=0
 export TORCHINDUCTOR_DISABLE_CUDAGRAPHS=1
 
 # Run training
-uv run python run_train.py --train-config configs/train_t4x2.yaml --no-gradient-checkpointing
+uv run python run_train.py --train-config configs/train_t4x2.yaml
