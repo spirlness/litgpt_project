@@ -235,12 +235,34 @@ def patch_cudagraph_for_compile() -> None:
 def patch_gradient_checkpointing() -> None:
     from litgpt.model import Block
 
+    disable_ckpt_env = os.environ.get("DISABLE_GRADIENT_CHECKPOINTING", "").lower()
+    if disable_ckpt_env in ("1", "true", "yes", "on"):
+        if hasattr(Block, "_orig_forward"):
+            setattr(Block, "forward", getattr(Block, "_orig_forward"))
+        setattr(Block, "_ckpt_patched", False)
+        print("Gradient checkpointing patch skipped due to DISABLE_GRADIENT_CHECKPOINTING env")
+        return
+
+    if getattr(Block, "_ckpt_patched", False):
+        return
+
     _orig_block_forward = Block.forward
+    setattr(Block, "_orig_forward", _orig_block_forward)
 
     def _checkpointed_block_forward(self, *args, **kwargs):
         return torch.utils.checkpoint.checkpoint(_orig_block_forward, self, *args, **kwargs, use_reentrant=False)
 
     setattr(Block, "forward", _checkpointed_block_forward)
+    setattr(Block, "_ckpt_patched", True)
+
+
+def restore_gradient_checkpointing() -> None:
+    from litgpt.model import Block
+
+    orig_forward = getattr(Block, "_orig_forward", None)
+    if orig_forward is not None:
+        setattr(Block, "forward", orig_forward)
+    setattr(Block, "_ckpt_patched", False)
 
 
 def get_latest_metrics_csv(out_dir: Path) -> Optional[Path]:

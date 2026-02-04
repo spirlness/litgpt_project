@@ -19,6 +19,7 @@ from fixed_text_files import FixedTextFiles as TextFiles
 from src.utils import (
     apply_runtime_config,
     patch_gradient_checkpointing,
+    restore_gradient_checkpointing,
     start_progress_bar,
     verify_flash_attention,
     configure_flash_attention,
@@ -185,6 +186,11 @@ if __name__ == "__main__":
     if grad_checkpointing is None:
         grad_checkpointing = train_cfg_raw["train"].get("gradient_checkpointing", False)
 
+    disable_ckpt_env = os.environ.get("DISABLE_GRADIENT_CHECKPOINTING", "").lower()
+    if disable_ckpt_env in ("1", "true", "yes", "on") and grad_checkpointing:
+        print("DISABLE_GRADIENT_CHECKPOINTING set; forcing gradient checkpointing OFF")
+        grad_checkpointing = False
+
     train_cfg_raw["train"].pop("gradient_checkpointing", None)
 
     opt_cfg = train_cfg_raw.get("optimization", {})
@@ -235,6 +241,8 @@ if __name__ == "__main__":
     if grad_checkpointing:
         patch_gradient_checkpointing()
         print("Enabled gradient checkpointing via Block.forward patch")
+    else:
+        restore_gradient_checkpointing()
 
     model_config = Config(**model_cfg_raw)
 
