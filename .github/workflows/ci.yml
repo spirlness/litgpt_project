@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [master, main]
 
+env:
+  UV_HTTP_TIMEOUT: "600"
+
 jobs:
   lint:
     runs-on: ubuntu-latest
