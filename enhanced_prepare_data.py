@@ -4,11 +4,9 @@
 """
 
 import argparse
-import os
 import json
-import glob
+import os
 from pathlib import Path
-from typing import List, Dict, Any
 
 import requests
 import yaml

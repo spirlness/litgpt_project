@@ -20,7 +20,11 @@ from litgpt import Config, GPT
 from litgpt.tokenizer import Tokenizer
 
 from fixed_text_files import FixedTextFiles
-from src.utils import patch_gradient_checkpointing
+from src.utils import (
+    patch_gradient_checkpointing,
+    patch_flops_measurement,
+    patch_cudagraph_for_compile,
+)
 
 
 def load_yaml(path: Path) -> dict:
@@ -79,7 +83,9 @@ def save_checkpoint(
                 shutil.rmtree(old_checkpoint)
 
 
-def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
+def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) -> None:
+    patch_flops_measurement()
+
     model_cfg = load_yaml(model_cfg_path)
     train_cfg = load_yaml(train_cfg_path)
 
@@ -93,6 +99,32 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     data_section = train_cfg.get("data", {})
     optimizer_section = train_cfg.get("optimizer", {})
     grad_checkpointing = bool(train_section.get("gradient_checkpointing", False))
+
+    opt_cfg = train_cfg.get("optimization", {})
+    env_compile = os.environ.get("TORCH_COMPILE")
+    if env_compile is not None:
+        env_compile = env_compile.lower() in ("1", "true", "yes", "on")
+
+    if args.compile is not None:
+        use_compile = args.compile
+    elif env_compile is not None:
+        use_compile = env_compile
+    else:
+        use_compile = opt_cfg.get("compile", False)
+
+    compile_mode = args.compile_mode or opt_cfg.get("compile_mode", "default")
+    compile_dynamic = (
+        args.compile_dynamic
+        if args.compile_dynamic is not None
+        else opt_cfg.get("compile_dynamic", False)
+    )
+    compile_fullgraph = (
+        args.compile_fullgraph
+        if args.compile_fullgraph is not None
+        else opt_cfg.get("compile_fullgraph", False)
+    )
+
+    print(f"Compilation {'ENABLED' if use_compile else 'DISABLED'}", flush=True)
 
     fabric = L.Fabric(
         strategy=train_cfg.get("strategy", "ddp"),
@@ -120,6 +152,15 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     model = GPT(config)
     max_seq_length = int(train_section.get("max_seq_length", config.block_size))
     model.max_seq_length = max_seq_length
+
+    if use_compile:
+        patch_cudagraph_for_compile()
+        model = torch.compile(
+            model,
+            mode=compile_mode,
+            dynamic=compile_dynamic,
+            fullgraph=compile_fullgraph,
+        )
 
     optimizer = build_optimizer(model, optimizer_section)
 
@@ -216,6 +257,9 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
             input_ids = batch[:, :max_seq_length].contiguous()
             targets = batch[:, 1 : max_seq_length + 1].contiguous()
 
+            if use_compile:
+                torch.compiler.cudagraph_mark_step_begin()
+
             sync_gradients = micro_step == grad_accum_steps - 1
             with fabric.no_backward_sync(model, enabled=not sync_gradients):
                 logits = model(input_ids)
@@ -267,6 +311,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LitGPT Fabric training")
     parser.add_argument("--model-config", type=Path, default=Path("model_config.yaml"))
     parser.add_argument("--train-config", type=Path, default=Path("configs/kaggle_t4_ddp.yaml"))
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument(
+        "--compile-mode", type=str, choices=["default", "reduce-overhead", "max-autotune"]
+    )
+    parser.add_argument("--compile-dynamic", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument(
+        "--compile-fullgraph", action=argparse.BooleanOptionalAction, default=None
+    )
     args = parser.parse_args()
 
-    train(args.model_config, args.train_config)
+    train(args.model_config, args.train_config, args)
