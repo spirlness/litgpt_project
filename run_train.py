@@ -260,6 +260,11 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
             break
 
     save_checkpoint(fabric, out_dir, global_step, total_tokens, model, optimizer)
+    if fabric.device.type == "cuda":
+        allocated_gib = torch.cuda.max_memory_allocated() / (1024**3)
+        reserved_gib = torch.cuda.max_memory_reserved() / (1024**3)
+        fabric.print(f"max_memory_allocated_gib={allocated_gib:.3f}")
+        fabric.print(f"max_memory_reserved_gib={reserved_gib:.3f}")
     fabric.print("Training complete.")
 
 

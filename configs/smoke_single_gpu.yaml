@@ -1,0 +1,31 @@
+out_dir: ./checkpoints/smoke_fabric_step200
+strategy: auto
+devices: 1
+num_nodes: 1
+precision: bf16-mixed
+tokenizer_dir: ./data/tokenizer
+
+data:
+  init_args:
+    train_data_path: ./data/custom_text/train
+    val_data_path: ./data/custom_text/val
+    num_workers: 2
+
+train:
+  micro_batch_size: 1
+  global_batch_size: 1
+  max_seq_length: 256
+  max_tokens: 51200
+  log_interval: 10
+  save_interval: 0
+  gradient_checkpointing: true
+  max_norm: 1.0
+  lr_warmup_steps: 5
+
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 0.0003
+    weight_decay: 0.01
+
+resume: null
