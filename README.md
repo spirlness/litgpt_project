@@ -1,155 +1,141 @@
-# LitGPT MoE Training Project
+# LitGPT MoE 训练项目
 
-Mixture of Experts language model training with LitGPT framework on TinyStories dataset.
+本项目基于 [LitGPT](https://github.com/Lightning-AI/litgpt) 框架，专注于在 TinyStories 数据集上训练混合专家 (MoE) 语言模型。项目经过优化，支持从本地消费级显卡 (如 RTX 3060) 到云端多卡环境的训练。
 
-## Quick Start
+## ✨ 特性
+
+- **混合专家 (MoE)**: 支持配置专家数量、激活专家数等 MoE 关键参数。
+- **环境适配**: 提供针对单卡 (RTX 3060 6GB) 和多卡 (Kaggle T4 x2) 的专用配置。
+- **数据管线**: 包含从下载、清洗到 Tokenize 的完整数据处理脚本。
+- **监控集成**: 支持 Weights & Biases (W&B) 进行实验监控和数据集版本管理。
+- **本地优化**: 针对 Windows 和有限显存环境进行了专门适配。
+
+## 🚀 快速开始
+
+### 1. 环境安装
+
+本项目使用 `uv` 进行依赖管理（推荐），也支持标准 pip。
 
 ```bash
-# Install dependencies
+# 安装 uv (如果尚未安装)
+pip install uv
+
+# 同步依赖 (会自动创建 .venv 虚拟环境)
 uv sync
 
-# Download dataset
-uv run python download_tinystories.py
-
-# Prepare tokenized data
-uv run python prepare_data.py
-
-# Train model
-uv run python run_train.py
-
-# Generate text
-uv run python generate.py --prompt "Once upon a time"
-
-# Evaluate model
-uv run python evaluate.py
+# 激活虚拟环境 (Windows Git Bash)
+source .venv/Scripts/activate
+# 或者 Windows CMD
+# .venv\Scripts\activate.bat
 ```
 
-## Project Structure
+### 2. 数据准备
 
+```bash
+# 下载 TinyStories 数据集
+python scripts/download_tinystories.py
+
+# 预处理与 Tokenize (生成 index.json 索引)
+python prepare_data.py --data-dir data/custom_text
 ```
+
+### 3. 开始训练
+
+#### 💻 本地单卡训练 (推荐 RTX 3060/4060 等)
+
+使用我们专门优化的配置文件 `configs/local_rtx3060.yaml`，该配置针对 6GB+ 显存进行了优化（单卡、低 Batch Size、梯度累积）。
+
+```bash
+# 训练完整模型 (200M 参数)
+python run_train.py --train-config configs/local_rtx3060.yaml
+
+# 快速调试 (30M 参数，启动更快)
+python run_train.py --model-config configs/moe_30m_debug.yaml --train-config configs/local_rtx3060.yaml
+```
+
+#### ☁️ 云端/多卡训练
+
+```bash
+# 使用 Kaggle T4 x2 配置
+python run_train.py --train-config configs/kaggle_t4_ddp.yaml
+```
+
+### 4. 模型生成与评估
+
+```bash
+# 文本生成测试
+python generate.py --prompt "Once upon a time" --checkpoint_dir checkpoints/final
+
+# 评估模型
+python evaluate.py --checkpoint_dir checkpoints/final
+```
+
+## 📂 项目结构
+
+```text
 litgpt_project/
-├── run_train.py          # Training entrypoint
-├── generate.py           # Text generation
-├── evaluate.py           # Model evaluation
-├── prepare_data.py       # Data preprocessing
-├── download_tinystories.py # Dataset downloader
-├── src/
-│   └── utils.py          # Performance utilities
-├── tests/
-│   ├── test_smoke.py     # CPU smoke tests
-│   └── test_gpu_training.py # GPU performance tests
-├── configs/
-│   ├── moe_30m_debug.yaml
-│   ├── moe_200m.yaml
-│   └── moe_400m.yaml
-├── model_config.yaml     # Active model config
-└── train_config.yaml     # Training hyperparameters
+├── configs/                 # 配置文件目录
+│   ├── local_rtx3060.yaml   # [新增] 本地单卡优化配置
+│   ├── kaggle_t4_ddp.yaml   # Kaggle 双卡 DDP 配置
+│   ├── moe_30m_debug.yaml   # 调试用小模型配置
+│   └── moe_200m.yaml        # 默认 200M 模型配置
+├── data/                    # 数据目录 (自动生成)
+├── docs/                    # 文档与报告
+│   └── reports/             # 历史修复报告与技术文档
+├── scripts/                 # 辅助脚本
+│   ├── download_tinystories.py # 数据集下载
+│   ├── generate_index_json.py  # 索引生成工具
+│   └── test_compile.py         # 编译测试
+├── src/                     # 源代码模块
+│   ├── fixed_text_files.py     # 修复版数据加载器
+│   ├── wandb_dataset.py        # W&B 数据集集成
+│   └── utils.py                # 通用工具
+├── prepare_data.py          # 数据预处理入口
+├── run_train.py             # 训练主程序
+├── generate.py              # 生成脚本
+├── evaluate.py              # 评估脚本
+└── pyproject.toml           # 项目依赖定义
 ```
 
-## Model Architecture
+## ⚙️ 配置说明
 
-| Parameter | Value |
-|-----------|-------|
-| Parameters | ~549M |
-| Layers | 12 |
-| Embedding Dim | 768 |
-| Attention Heads | 12 |
-| Query Groups (GQA) | 4 |
-| Experts | 8 |
-| Active Experts | 2 |
-| Context Length | 2048 |
-| Vocab Size | 50257 |
+### 训练配置 (`configs/*.yaml`)
 
-## Training
+| 参数 | 说明 | 推荐值 (本地) |
+|------|------|---------------|
+| `devices` | 使用 GPU 数量 | `1` |
+| `micro_batch_size` | 单次前向传播的样本数 (显存敏感) | `2` 或 `4` |
+| `global_batch_size` | 梯度累积后的总 Batch Size | `64` 或 `128` |
+| `gradient_checkpointing` | 梯度检查点 (节省显存) | `true` |
+| `num_workers` | 数据加载进程数 | Windows设为 `0` |
 
-### Basic Training
+### 模型架构
+
+默认模型配置 (`moe_200m.yaml`)：
+- **总参数量**: ~200M
+- **专家数**: 8 (Top-2 激活)
+- **层数**: 12
+- **隐藏层维度**: 768
+
+## 🛠️ 常见问题与修复
+
+1. **Windows 下报错 `BrokenPipeError` 或 DataLoader 卡住**
+   - **解决**: 确保在配置中设置 `num_workers: 0`。`local_rtx3060.yaml` 已默认包含此设置。
+
+2. **OOM (Out of Memory)**
+   - **解决**: 减小 `micro_batch_size` (如设为 1)，或者使用更小的模型配置 (`moe_30m_debug.yaml`)。
+
+3. **`AttributeError: 'Config' object has no attribute 'moe_...'`**
+   - **解决**: 请确保使用最新的 `run_train.py`，我们已修复了 MoE 参数注入的逻辑。
+
+4. **恢复训练失败 (Size Mismatch)**
+   - **解决**: 确保 `resume` 参数设置为 `null` (在配置文件中) 以重新开始训练，或者指定正确的 checkpoint 路径。不同模型配置产生的 checkpoint 不兼容。
+
+## 📊 监控
+
+支持 Weights & Biases 监控。设置环境变量或在 `prepare_data.py` 中启用：
 
 ```bash
-uv run python run_train.py
+export WANDB_PROJECT="litgpt-moe"
+python prepare_data.py --log-to-wandb
 ```
-
-### With Optimizations
-
-```bash
-# Enable torch.compile and Flash Attention
-uv run python run_train.py --compile --flash-attention
-
-# High-performance mode
-uv run python run_train.py --compile --compile-mode reduce-overhead --flash-attention-force
-```
-
-### CLI Options
-
-| Flag | Description |
-|------|-------------|
-| `--compile` | Enable torch.compile |
-| `--compile-mode` | `default`, `reduce-overhead`, `max-autotune` |
-| `--flash-attention` | Verify Flash Attention 2 |
-| `--flash-attention-force` | Fail if Flash Attention unavailable |
-| `--gradient-checkpointing` | Enable gradient checkpointing |
-| `--resume auto` | Auto-resume from latest checkpoint |
-| `--smoke-test` | Minimal CPU sanity check |
-| `--progress` | Show training progress bar |
-
-### Resume Training
-
-```bash
-# Auto-resume from latest checkpoint
-uv run python run_train.py --resume auto
-
-# Resume from specific checkpoint
-uv run python run_train.py --resume checkpoints/step-00001000
-```
-
-## Generation
-
-```bash
-uv run python generate.py --prompt "The little robot" --max_tokens 200
-```
-
-## Testing
-
-```bash
-# Run all tests
-uv run pytest
-
-# CPU smoke tests only
-uv run pytest tests/test_smoke.py
-
-# GPU performance tests
-uv run pytest tests/test_gpu_training.py
-
-# Skip slow tests
-uv run pytest -m "not slow"
-```
-
-## Requirements
-
-- Python 3.12+
-- CUDA 12.8+ (for GPU training)
-- Ampere+ GPU (SM 8.0+) for Flash Attention 2
-
-## Configuration
-
-### train_config.yaml
-
-```yaml
-train:
-  global_batch_size: 128
-  micro_batch_size: 4
-  max_tokens: 320000
-  max_seq_length: 512
-
-optimization:
-  compile: true
-  compile_mode: reduce-overhead
-  flash_attention: true
-```
-
-### Model Configs
-
-| Config | Use Case |
-|--------|----------|
-| `configs/moe_30m_debug.yaml` | Fast debugging |
-| `configs/moe_200m.yaml` | Default training |
-| `configs/moe_400m.yaml` | Larger variant |
