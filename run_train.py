@@ -16,7 +16,8 @@ import lightning as L
 import torch
 import torch.nn.functional as F
 import yaml
-from litgpt import Config, GPT
+from litgpt.config import Config
+from litgpt.model import GPT
 from litgpt.tokenizer import Tokenizer
 
 from src.fixed_text_files import FixedTextFiles
