@@ -9,7 +9,7 @@ log_dataset_to_wandb = None
 HAS_WANDB_DATASET = False
 
 try:
-    import wandb_dataset  # type: ignore
+    import src.wandb_dataset as wandb_dataset  # type: ignore
 
     log_dataset_to_wandb = wandb_dataset.log_dataset_to_wandb
     HAS_WANDB_DATASET = True
@@ -160,13 +160,13 @@ if __name__ == "__main__":
     # 验证生成的index.json文件
     print("\nVerifying generated index.json files...")
     try:
-        from generate_index_json import verify_index_json
+        from scripts.generate_index_json import verify_index_json
 
         if verify_index_json(data_module.out_path_train):
             print("✓ Training data index.json verified")
         else:
             print("⚠ Regenerating training data index.json...")
-            from generate_index_json import generate_index_json
+            from scripts.generate_index_json import generate_index_json
 
             generate_index_json(data_module.out_path_train, "train", 1000)
 
@@ -174,7 +174,7 @@ if __name__ == "__main__":
             print("✓ Validation data index.json verified")
         else:
             print("⚠ Regenerating validation data index.json...")
-            from generate_index_json import generate_index_json
+            from scripts.generate_index_json import generate_index_json
 
             generate_index_json(data_module.out_path_val, "val", 200)
     except Exception as e:

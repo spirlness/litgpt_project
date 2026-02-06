@@ -5,6 +5,8 @@ moe_intermediate_size: 4096
 n_embd: 1024
 n_expert: 16
 n_expert_per_token: 4
+moe_aux_loss_weight: 0.01
+moe_router_stats: true
 n_head: 16
 n_layer: 24
 n_query_groups: 4

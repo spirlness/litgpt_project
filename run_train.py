@@ -19,7 +19,7 @@ import yaml
 from litgpt import Config, GPT
 from litgpt.tokenizer import Tokenizer
 
-from fixed_text_files import FixedTextFiles
+from src.fixed_text_files import FixedTextFiles
 from src.utils import patch_gradient_checkpointing
 
 
@@ -89,6 +89,12 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     if "norm_eps" in model_cfg:
         model_cfg["norm_eps"] = float(model_cfg["norm_eps"])
 
+    # Extract MoE specific args that are not in LitGPT Config
+    moe_args = {}
+    for key in ["moe_aux_loss_weight", "moe_router_stats"]:
+        if key in model_cfg:
+            moe_args[key] = model_cfg.pop(key)
+
     train_section = train_cfg.get("train", {})
     data_section = train_cfg.get("data", {})
     optimizer_section = train_cfg.get("optimizer", {})
@@ -117,6 +123,11 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
         raise FileNotFoundError(f"Tokenizer not found at {tokenizer_dir}. Run prepare_data.py first.")
 
     config = Config(**model_cfg)
+
+    # Inject MoE args back into config object
+    for key, value in moe_args.items():
+        setattr(config, key, value)
+
     model = GPT(config)
     max_seq_length = int(train_section.get("max_seq_length", config.block_size))
     model.max_seq_length = max_seq_length
@@ -179,7 +190,8 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
 
         if ckpt_path and ckpt_path.exists():
             state = {"model": model, "optimizer": optimizer, "step": 0, "total_tokens": 0}
-            fabric.load(ckpt_path, state)
+            # Set strict=False to handle potential missing keys (like step/total_tokens in older checkpoints)
+            fabric.load(ckpt_path, state, strict=False)
             start_step = int(state.get("step", 0))
             total_tokens = int(state.get("total_tokens", 0))
             fabric.print(f"Resumed from {ckpt_path} (step={start_step}, tokens={total_tokens})")
@@ -220,6 +232,9 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
             with fabric.no_backward_sync(model, enabled=not sync_gradients):
                 logits = model(input_ids)
                 loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+                moe_stats = getattr(model, "router_stats", None)
+                if moe_stats and moe_stats.get("aux_loss") is not None and model.config.moe_aux_loss_weight > 0:
+                    loss = loss + model.config.moe_aux_loss_weight * moe_stats["aux_loss"]
                 loss_sum += loss.detach()
                 fabric.backward(loss / grad_accum_steps)
 
@@ -242,13 +257,20 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
         if log_interval > 0 and global_step % log_interval == 0:
             avg_loss = loss_sum / grad_accum_steps
             avg_loss = cast(torch.Tensor, fabric.all_reduce(avg_loss, reduce_op="mean"))
+            moe_stats = getattr(model, "router_stats", None)
+            aux_loss_value = None
+            if moe_stats and moe_stats.get("aux_loss") is not None:
+                aux_loss_value = moe_stats["aux_loss"].detach()
             now = time.perf_counter()
             elapsed = now - last_log_time
             tokens_delta = total_tokens - last_log_tokens
             tokens_per_sec = tokens_delta / elapsed if elapsed > 0 else 0.0
             lr = optimizer.param_groups[0]["lr"]
+            aux_loss_text = ""
+            if aux_loss_value is not None and model.config.moe_aux_loss_weight > 0:
+                aux_loss_text = f" aux={aux_loss_value.item():.4f}"
             fabric.print(
-                f"step={global_step} loss={avg_loss.item():.4f} tokens={total_tokens} tok/s={tokens_per_sec:.0f} lr={lr:.2e}"
+                f"step={global_step} loss={avg_loss.item():.4f}{aux_loss_text} tokens={total_tokens} tok/s={tokens_per_sec:.0f} lr={lr:.2e}"
             )
             last_log_time = now
             last_log_tokens = total_tokens
