@@ -19,7 +19,7 @@ train:
   log_interval: 1
   max_tokens: 320000
   lr_warmup_steps: 10
-  micro_batch_size: 2  # Reduced from 16 to 4, then to 2 to fix OOM
+  micro_batch_size: 1  # Reduced from 4 to 2, now to 1 for extreme OOM fix
   save_interval: 1000
   gradient_checkpointing: true
   max_norm: 1.0
