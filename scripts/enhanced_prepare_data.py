@@ -303,7 +303,6 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("数据处理完成！")
 
-    # 验证生成的index.json文件
     print("\n验证处理后的数据...")
     train_out_dir = data_module.out_path_train
     val_out_dir = data_module.out_path_val
@@ -312,35 +311,19 @@ if __name__ == "__main__":
     print(f"验证数据目录: {val_out_dir}")
 
     # 验证训练数据
-    train_bin_count = _count_bin_files(train_out_dir)
-    print(f"训练数据chunk文件数: {train_bin_count}")
     if _verify_index_json(train_out_dir):
-        print("✓ 训练数据index.json验证通过")
+        print("✓ 训练数据验证成功")
     else:
-        print("⚠ 重新生成训练数据index.json...")
-        _generate_index_json(train_out_dir, estimated_samples=1000)
-        if _verify_index_json(train_out_dir):
-            print("✓ 重新生成的训练数据index.json验证通过")
-        else:
-            print("✗ 训练数据index.json仍存在问题")
+        print("✗ 训练数据验证失败，index.json 缺失或损坏")
 
     # 验证验证数据
-    val_bin_count = _count_bin_files(val_out_dir)
-    print(f"验证数据chunk文件数: {val_bin_count}")
     if _verify_index_json(val_out_dir):
-        print("✓ 验证数据index.json验证通过")
+        print("✓ 验证数据验证成功")
     else:
-        print("⚠ 重新生成验证数据index.json...")
-        _generate_index_json(val_out_dir, estimated_samples=200)
-        if _verify_index_json(val_out_dir):
-            print("✓ 重新生成的验证数据index.json验证通过")
-        else:
-            print("✗ 验证数据index.json仍存在问题")
+        print("✗ 验证数据验证失败，index.json 缺失或损坏")
 
     print("=" * 60)
-    print("数据准备完全完成！")
-    print(f"训练数据: {train_out_dir}")
-    print(f"验证数据: {val_out_dir}")
+    print("数据准备结束")
     print("=" * 60)
 
     if args.log_to_wandb:
