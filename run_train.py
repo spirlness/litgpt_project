@@ -1,5 +1,13 @@
 import os
 
+# Import torch_xla for TPU support if available
+# This fixes "AttributeError: module 'torch' has no attribute 'xla'" in torch.utils.checkpoint
+try:
+    import torch_xla
+    import torch_xla.core.xla_model as xm
+except ImportError:
+    torch_xla = None
+
 os.environ.setdefault("NCCL_P2P_DISABLE", "1")
 os.environ.setdefault("NCCL_IB_DISABLE", "1")
 os.environ.setdefault("NCCL_SHM_DISABLE", "1")
