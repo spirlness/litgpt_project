@@ -3,10 +3,9 @@
 专门用于生成或修复index.json文件的脚本
 """
 
-import json
 import argparse
+import json
 from pathlib import Path
-from typing import List, Dict, Any
 
 
 def generate_index_json(data_dir: Path, dataset_type: str = "train", estimated_samples: int = 1000) -> bool:
@@ -49,7 +48,7 @@ def generate_index_json(data_dir: Path, dataset_type: str = "train", estimated_s
             if "chunks" in existing_data and "config" in existing_data:
                 print("✓ 已存在有效的index.json文件，无需重新生成")
                 return True
-        except:
+        except Exception:
             print("现有index.json文件损坏，将重新生成")
 
     # 根据数据集类型调整样本数估计
@@ -100,7 +99,7 @@ def generate_index_json(data_dir: Path, dataset_type: str = "train", estimated_s
 
         print(f"✓ 成功生成 {index_file}")
         print(f"  - 包含 {len(chunks)} 个chunk")
-        print(f"  - 格式兼容litdata")
+        print("  - 格式兼容litdata")
         return True
 
     except Exception as e:

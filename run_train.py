@@ -21,7 +21,11 @@ from litgpt.model import GPT
 from litgpt.tokenizer import Tokenizer
 
 from src.fixed_text_files import FixedTextFiles
-from src.utils import patch_gradient_checkpointing
+from src.utils import (
+    patch_cudagraph_for_compile,
+    patch_flops_measurement,
+    patch_gradient_checkpointing,
+)
 
 
 def load_yaml(path: Path) -> dict:
@@ -80,7 +84,7 @@ def save_checkpoint(
                 shutil.rmtree(old_checkpoint)
 
 
-def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
+def train(model_cfg_path: Path, train_cfg_path: Path, compile: bool | None = None) -> None:
     model_cfg = load_yaml(model_cfg_path)
     train_cfg = load_yaml(train_cfg_path)
 
@@ -100,6 +104,20 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     data_section = train_cfg.get("data", {})
     optimizer_section = train_cfg.get("optimizer", {})
     grad_checkpointing = bool(train_section.get("gradient_checkpointing", False))
+
+    optimization = train_cfg.get("optimization", {})
+    compile_model = compile
+    if compile_model is None:
+        compile_env = os.environ.get("TORCH_COMPILE", "").lower()
+        if compile_env in ("1", "true", "yes", "on"):
+            compile_model = True
+        elif compile_env in ("0", "false", "no", "off"):
+            compile_model = False
+        else:
+            compile_model = bool(optimization.get("compile", False))
+
+    # Always patch FLOPs measurement for MoE
+    patch_flops_measurement()
 
     fabric = L.Fabric(
         strategy=train_cfg.get("strategy", "ddp"),
@@ -136,6 +154,10 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     optimizer = build_optimizer(model, optimizer_section)
 
     model, optimizer = fabric.setup(model, optimizer)
+
+    if compile_model:
+        patch_cudagraph_for_compile()
+        model = torch.compile(model)
 
     train_data_path = data_section.get("init_args", {}).get("train_data_path")
     val_data_path = data_section.get("init_args", {}).get("val_data_path")
@@ -295,6 +317,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LitGPT Fabric training")
     parser.add_argument("--model-config", type=Path, default=Path("model_config.yaml"))
     parser.add_argument("--train-config", type=Path, default=Path("configs/kaggle_t4_ddp.yaml"))
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
 
-    train(args.model_config, args.train_config)
+    train(args.model_config, args.train_config, compile=args.compile)
