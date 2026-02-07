@@ -2,7 +2,7 @@
 name = "litgpt-project"
 version = "0.1.0"
 description = "MoE TinyStories with LitGPT - Mixture of Experts Language Model"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "torch>=2.10.0,<2.11",
     "torchvision>=0.25.0,<0.26",
