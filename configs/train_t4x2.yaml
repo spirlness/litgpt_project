@@ -19,35 +19,16 @@ train:
   log_interval: 1
   max_tokens: 320000
   lr_warmup_steps: 10
-  micro_batch_size: 1  # Reduced from 4 to 2, now to 1 for extreme OOM fix
+  micro_batch_size: 1
   save_interval: 1000
   gradient_checkpointing: true
   max_norm: 1.0
   max_seq_length: 512
-
-eval:
-  interval: 0
-  final_validation: false
-
-resume: auto
-
-# Performance optimization options
-optimization:
-  # torch.compile settings
-  compile: false
-  compile_mode: reduce-overhead
-  compile_dynamic: true
-  compile_fullgraph: false
-
-  # Flash Attention settings (T4 supports SM 7.5, Flash Attention 2 needs SM 8.0+)
-  flash_attention: false
-  flash_attention_force: false
-  disable_math_fallback: false
-
-logger_name: csv
 
 optimizer:
   class_path: torch.optim.AdamW
   init_args:
     lr: 0.0003
     weight_decay: 0.01
+    # Enable 8-bit optimizer to save memory
+    bnb_optimizer_type: "AdamW8bit"
