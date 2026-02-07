@@ -72,6 +72,26 @@ def save_checkpoint(
     )
 
     if fabric.is_global_zero:
+        # Upload to Hugging Face Hub (Automatic Backup)
+        try:
+            from huggingface_hub import HfApi
+
+            api = HfApi()
+            repo_id = "lyyh/MOE-200M"
+            print(f"Uploading step {step} to {repo_id}...")
+            # Upload folder content
+            api.upload_folder(
+                folder_path=str(checkpoint_dir),
+                repo_id=repo_id,
+                path_in_repo=f"step-{step:08d}",
+                repo_type="model",
+                commit_message=f"Upload checkpoint step {step}",
+            )
+            print(f"Successfully uploaded step {step} to Hugging Face Hub")
+        except Exception as e:
+            print(f"Failed to upload checkpoint to Hugging Face Hub: {e}")
+            print("Continuing training despite upload failure...")
+
         import shutil
 
         all_checkpoints = sorted(out_dir.glob("step-*"))
