@@ -15,13 +15,13 @@ uv venv .venv_tpu --python 3.11 --clear
 source .venv_tpu/bin/activate
 
 # 3. Install dependencies using uv
-# We find the project root (where pyproject.toml is)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-echo "Installing dependencies from $PROJECT_ROOT (including TPU support)..."
-cd "$PROJECT_ROOT"
-uv pip install -e ".[tpu]"
+echo "Installing dependencies from $PROJECT_ROOT into .venv_tpu (Python 3.11)..."
+# We must use --python pointing to the venv's interpreter to avoid uv defaulting to system Python 3.12
+# We also allow pre-releases to avoid the 'unsatisfiable' error for specific XLA builds
+uv pip install --python "$PROJECT_ROOT/.venv_tpu/bin/python" -e "$PROJECT_ROOT[tpu]" --prerelease=allow
 
 # 4. Set environment variables optimization for TPU
 export PJRT_DEVICE=TPU
