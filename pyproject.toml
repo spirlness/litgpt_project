@@ -28,6 +28,9 @@ dev = [
     "pytest-cov>=4.0,<6",
     "ruff>=0.6,<1",
 ]
+tpu = [
+    "torch-xla[tpu]~=2.5.0",
+]
 
 [[tool.uv.index]]
 name = "aliyun"
@@ -39,10 +42,16 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+[[tool.uv.index]]
+name = "tpu"
+url = "https://storage.googleapis.com/libtpu-releases/index.html"
+explicit = true
+
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
+torch-xla = { index = "tpu" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
