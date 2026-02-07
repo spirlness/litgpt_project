@@ -37,7 +37,17 @@ def resolve_class(path: str):
 
 def build_optimizer(model: torch.nn.Module, optimizer_cfg: dict) -> torch.optim.Optimizer:
     class_path = optimizer_cfg.get("class_path", "torch.optim.AdamW")
-    init_args = optimizer_cfg.get("init_args", {})
+    init_args = optimizer_cfg.get("init_args", {}).copy()
+
+    # Handle bitsandbytes 8-bit optimizer specifically
+    if "bnb_optimizer_type" in init_args:
+        import bitsandbytes as bnb
+
+        bnb_type = init_args.pop("bnb_optimizer_type")
+        if bnb_type == "AdamW8bit":
+            return bnb.optim.AdamW8bit(model.parameters(), **init_args)
+        # Add other types if needed
+
     optimizer_cls = resolve_class(class_path)
     return optimizer_cls(model.parameters(), **init_args)
 
