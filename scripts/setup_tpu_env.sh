@@ -14,10 +14,14 @@ fi
 uv venv .venv_tpu --python 3.11 --clear
 source .venv_tpu/bin/activate
 
-# 3. Install dependencies using uv sync or uv pip
-# We use the 'tpu' extra defined in pyproject.toml
-echo "Installing dependencies (including TPU support)..."
-uv pip install . --extra tpu
+# 3. Install dependencies using uv
+# We find the project root (where pyproject.toml is)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+echo "Installing dependencies from $PROJECT_ROOT (including TPU support)..."
+cd "$PROJECT_ROOT"
+uv pip install -e ".[tpu]"
 
 # 4. Set environment variables optimization for TPU
 export PJRT_DEVICE=TPU
