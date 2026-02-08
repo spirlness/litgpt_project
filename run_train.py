@@ -29,7 +29,11 @@ from litgpt.model import GPT
 from litgpt.tokenizer import Tokenizer
 
 from src.fixed_text_files import FixedTextFiles
-from src.utils import patch_gradient_checkpointing
+from src.utils import (
+    patch_cudagraph_for_compile,
+    patch_flops_measurement,
+    patch_gradient_checkpointing,
+)
 
 
 def load_yaml(path: Path) -> dict:
@@ -108,7 +112,9 @@ def save_checkpoint(
                 shutil.rmtree(old_checkpoint)
 
 
-def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
+def train(model_cfg_path: Path, train_cfg_path: Path, compile_cli: bool | None = None) -> None:
+    patch_flops_measurement()
+
     model_cfg = load_yaml(model_cfg_path)
     train_cfg = load_yaml(train_cfg_path)
 
@@ -129,6 +135,19 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     optimizer_section = train_cfg.get("optimizer", {})
     grad_checkpointing = bool(train_section.get("gradient_checkpointing", False))
 
+    # Determine compile setting
+    optimization_section = train_cfg.get("optimization", {})
+    compile_config = optimization_section.get("compile", False)
+    compile_env = os.environ.get("TORCH_COMPILE")
+    if compile_env is not None:
+        compile_env = compile_env.lower() in ("1", "true", "yes", "on")
+
+    should_compile = compile_config
+    if compile_env is not None:
+        should_compile = compile_env
+    if compile_cli is not None:
+        should_compile = compile_cli
+
     fabric = L.Fabric(
         strategy=train_cfg.get("strategy", "ddp"),
         devices=train_cfg.get("devices", 2),
@@ -140,6 +159,9 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     if grad_checkpointing:
         patch_gradient_checkpointing()
         fabric.print("Enabled gradient checkpointing via Block.forward patch")
+
+    if should_compile:
+        patch_cudagraph_for_compile()
 
     out_dir = Path(train_cfg.get("out_dir", "checkpoints"))
     tokenizer_dir = Path(train_cfg.get("tokenizer_dir", "data/tokenizer"))
@@ -164,6 +186,10 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     optimizer = build_optimizer(model, optimizer_section)
 
     model, optimizer = fabric.setup(model, optimizer)
+
+    if should_compile:
+        fabric.print(f"Compiling model with mode='{optimization_section.get('compile_mode', 'reduce-overhead')}'")
+        model = torch.compile(model, mode=optimization_section.get("compile_mode", "reduce-overhead"))
 
     train_data_path = data_section.get("init_args", {}).get("train_data_path")
     val_data_path = data_section.get("init_args", {}).get("val_data_path")
@@ -323,6 +349,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LitGPT Fabric training")
     parser.add_argument("--model-config", type=Path, default=Path("model_config.yaml"))
     parser.add_argument("--train-config", type=Path, default=Path("configs/kaggle_t4_ddp.yaml"))
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
 
-    train(args.model_config, args.train_config)
+    train(args.model_config, args.train_config, args.compile)
