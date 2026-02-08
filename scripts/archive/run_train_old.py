@@ -1,30 +1,29 @@
-import sys
+import argparse
 import os
 import shutil
-import argparse
+import sys
 import threading
-import yaml
-import requests
 from pathlib import Path
-from typing import Union, Literal
+from typing import Literal, Union
 from unittest.mock import patch
 
+import requests
 import torch
+import yaml
+from litgpt.args import LogArgs, TrainArgs
 from litgpt.config import Config
-from litgpt.args import TrainArgs, LogArgs
 
 # from litgpt.data import TextFiles
 from fixed_text_files import FixedTextFiles as TextFiles
-
 from src.utils import (
     apply_runtime_config,
+    configure_flash_attention,
+    patch_cudagraph_for_compile,
+    patch_flops_measurement,
     patch_gradient_checkpointing,
     restore_gradient_checkpointing,
     start_progress_bar,
     verify_flash_attention,
-    configure_flash_attention,
-    patch_flops_measurement,
-    patch_cudagraph_for_compile,
 )
 
 

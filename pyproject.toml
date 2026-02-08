@@ -33,7 +33,7 @@ dev = [
     "ruff>=0.6,<1",
 ]
 tpu = [
-    "torch-xla[tpu]~=2.5.0",
+    # "torch-xla[tpu]>=2.4.0",
 ]
 
 [[tool.uv.index]]
@@ -72,3 +72,6 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "run_train.py" = ["E402", "I001"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
