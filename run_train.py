@@ -4,7 +4,7 @@ import os
 # This fixes "AttributeError: module 'torch' has no attribute 'xla'" in torch.utils.checkpoint
 try:
     import torch_xla
-    import torch_xla.core.xla_model as xm
+    import torch_xla.core.xla_model as xm  # noqa: F401
 except ImportError:
     torch_xla = None
 
