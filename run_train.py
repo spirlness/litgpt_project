@@ -29,7 +29,14 @@ from litgpt.model import GPT
 from litgpt.tokenizer import Tokenizer
 
 from src.fixed_text_files import FixedTextFiles
-from src.utils import patch_gradient_checkpointing
+from src.utils import (
+    apply_runtime_config,
+    configure_flash_attention,
+    patch_cudagraph_for_compile,
+    patch_flops_measurement,
+    patch_gradient_checkpointing,
+    verify_flash_attention,
+)
 
 
 def load_yaml(path: Path) -> dict:
@@ -108,7 +115,7 @@ def save_checkpoint(
                 shutil.rmtree(old_checkpoint)
 
 
-def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
+def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) -> None:
     model_cfg = load_yaml(model_cfg_path)
     train_cfg = load_yaml(train_cfg_path)
 
@@ -123,6 +130,44 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     for key in ["moe_aux_loss_weight", "moe_router_stats"]:
         if key in model_cfg:
             moe_args[key] = model_cfg.pop(key)
+
+    opt_cfg = train_cfg.get("optimization", {})
+    # Check environment variable for compile override
+    env_compile = os.environ.get("TORCH_COMPILE")
+    if env_compile is not None:
+        env_compile = env_compile.lower() in ("1", "true", "yes", "on")
+
+    if args.compile is not None:
+        use_compile = args.compile
+    elif env_compile is not None:
+        use_compile = env_compile
+    else:
+        use_compile = opt_cfg.get("compile", False)
+
+    compile_mode = args.compile_mode or opt_cfg.get("compile_mode", "default")
+    compile_dynamic = (
+        args.compile_dynamic if args.compile_dynamic is not None else opt_cfg.get("compile_dynamic", False)
+    )
+    compile_fullgraph = (
+        args.compile_fullgraph if args.compile_fullgraph is not None else opt_cfg.get("compile_fullgraph", False)
+    )
+
+    use_flash_attention = (
+        args.flash_attention if args.flash_attention is not None else opt_cfg.get("flash_attention", False)
+    )
+    flash_attention_force = (
+        args.flash_attention_force
+        if args.flash_attention_force is not None
+        else opt_cfg.get("flash_attention_force", False)
+    )
+    disable_math_fallback = opt_cfg.get("disable_math_fallback", False)
+
+    configure_flash_attention(enable=True, disable_math_fallback=disable_math_fallback)
+    if use_flash_attention or flash_attention_force:
+        verify_flash_attention(force=flash_attention_force, verbose=True)
+
+    apply_runtime_config()
+    patch_flops_measurement()
 
     train_section = train_cfg.get("train", {})
     data_section = train_cfg.get("data", {})
@@ -164,6 +209,15 @@ def train(model_cfg_path: Path, train_cfg_path: Path) -> None:
     optimizer = build_optimizer(model, optimizer_section)
 
     model, optimizer = fabric.setup(model, optimizer)
+
+    if use_compile:
+        patch_cudagraph_for_compile()
+        model = torch.compile(
+            model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
+        )
+        fabric.print(
+            f"Model compiled with mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}"
+        )
 
     train_data_path = data_section.get("init_args", {}).get("train_data_path")
     val_data_path = data_section.get("init_args", {}).get("val_data_path")
@@ -323,6 +377,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LitGPT Fabric training")
     parser.add_argument("--model-config", type=Path, default=Path("model_config.yaml"))
     parser.add_argument("--train-config", type=Path, default=Path("configs/kaggle_t4_ddp.yaml"))
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument(
+        "--compile-mode", type=str, choices=["default", "reduce-overhead", "max-autotune"], default=None
+    )
+    parser.add_argument("--compile-dynamic", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--compile-fullgraph", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--flash-attention", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--flash-attention-force", action=argparse.BooleanOptionalAction, default=None)
+
     args = parser.parse_args()
 
-    train(args.model_config, args.train_config)
+    train(args.model_config, args.train_config, args)
