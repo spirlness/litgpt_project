@@ -35,10 +35,6 @@ dev = [
     "pytest-cov>=4.0,<6",
     "ruff>=0.6,<1",
 ]
-tpu = [
-    "torch-xla[tpu]~=2.5.0; python_version < '3.12'",
-]
-
 [[tool.uv.index]]
 name = "aliyun"
 url = "https://mirrors.aliyun.com/pypi/simple/"
@@ -58,7 +54,6 @@ explicit = true
 torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
-torch-xla = { index = "tpu" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
