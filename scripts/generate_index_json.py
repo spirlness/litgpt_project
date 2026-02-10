@@ -5,6 +5,7 @@
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 
@@ -81,7 +82,7 @@ def generate_index_json(data_dir: Path, dataset_type: str = "train", estimated_s
             "encryption": None,
             "item_loader": "TokensLoader",
         },
-        "updated_at": str(Path(__import__("time").time())),
+        "updated_at": str(time.time()),
     }
 
     # 写入index.json文件
