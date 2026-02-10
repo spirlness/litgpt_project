@@ -162,11 +162,10 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     )
     disable_math_fallback = opt_cfg.get("disable_math_fallback", False)
 
+    apply_runtime_config()
     configure_flash_attention(enable=True, disable_math_fallback=disable_math_fallback)
     if use_flash_attention or flash_attention_force:
         verify_flash_attention(force=flash_attention_force, verbose=True)
-
-    apply_runtime_config()
     patch_flops_measurement()
 
     train_section = train_cfg.get("train", {})
