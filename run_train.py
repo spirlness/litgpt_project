@@ -133,9 +133,21 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
 
     opt_cfg = train_cfg.get("optimization", {})
     # Check environment variable for compile override
-    env_compile = os.environ.get("TORCH_COMPILE")
-    if env_compile is not None:
-        env_compile = env_compile.lower() in ("1", "true", "yes", "on")
+    env_compile_raw = os.environ.get("TORCH_COMPILE")
+    env_compile = None
+    if env_compile_raw is not None:
+        value = env_compile_raw.strip().lower()
+        truthy_values = {"1", "true", "yes", "on"}
+        falsy_values = {"0", "false", "no", "off"}
+        if value in truthy_values:
+            env_compile = True
+        elif value in falsy_values:
+            env_compile = False
+        else:
+            raise ValueError(
+                f"Invalid TORCH_COMPILE value: {env_compile_raw!r}. "
+                f"Expected one of {sorted(truthy_values | falsy_values)}."
+            )
 
     if args.compile is not None:
         use_compile = args.compile
