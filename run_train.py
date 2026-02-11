@@ -33,7 +33,6 @@ from src.utils import (
     apply_runtime_config,
     configure_flash_attention,
     patch_cudagraph_for_compile,
-    patch_flops_measurement,
     patch_gradient_checkpointing,
     verify_flash_attention,
 )
@@ -178,7 +177,6 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     configure_flash_attention(enable=True, disable_math_fallback=disable_math_fallback)
     if use_flash_attention or flash_attention_force:
         verify_flash_attention(force=flash_attention_force, verbose=True)
-    patch_flops_measurement()
 
     train_section = train_cfg.get("train", {})
     data_section = train_cfg.get("data", {})

@@ -152,40 +152,6 @@ def apply_runtime_config() -> None:
         torch.backends.cuda.enable_math_sdp(True)
 
 
-def patch_flops_measurement() -> None:
-    """Patch FLOPs measurement to handle MoE routing ops with meta tensors.
-
-    MoE routing uses torch.where/torch.nonzero which don't have proper meta tensor
-    implementations. This patch sets the experimental config flag to allow meta tensor
-    operations to assume all elements are non-zero, enabling FLOPs measurement to work.
-
-    If that fails, falls back to returning 0.0 FLOPs rather than crashing.
-    """
-    # Enable meta tensor support for torch.nonzero (used by MoE routing)
-    try:
-        import torch.fx.experimental._config as fx_config
-
-        fx_config.meta_nonzero_assume_all_nonzero = True
-    except (ImportError, AttributeError):
-        pass
-
-    # Wrap measure_flops to catch any remaining errors and return 0.0 instead of crashing
-    try:
-        import lightning.fabric.utilities.throughput as throughput_module
-
-        _orig_measure_flops = throughput_module.measure_flops
-
-        def _measure_flops_patch(model, forward_fn, loss_fn, *args, **kwargs):
-            try:
-                return _orig_measure_flops(model, forward_fn, loss_fn, *args, **kwargs)
-            except (NotImplementedError, AttributeError, RuntimeError):
-                return 0.0
-
-        throughput_module.measure_flops = _measure_flops_patch
-    except ImportError:
-        pass
-
-
 def patch_cudagraph_for_compile() -> None:
     if not hasattr(torch.compiler, "cudagraph_mark_step_begin"):
         return
