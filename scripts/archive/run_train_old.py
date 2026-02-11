@@ -19,7 +19,6 @@ from src.utils import (
     apply_runtime_config,
     configure_flash_attention,
     patch_cudagraph_for_compile,
-    patch_flops_measurement,
     patch_gradient_checkpointing,
     restore_gradient_checkpointing,
     start_progress_bar,
@@ -235,7 +234,6 @@ if __name__ == "__main__":
         verify_flash_attention(force=flash_attention_force, verbose=True)
 
     apply_runtime_config()
-    patch_flops_measurement()
 
     if grad_checkpointing:
         patch_gradient_checkpointing()
