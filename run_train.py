@@ -220,6 +220,12 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     model, optimizer = fabric.setup(model, optimizer)
 
     if use_compile:
+        # Disable torch.compile for MoE models as it causes issues in this environment
+        if getattr(config, "n_expert", 0) > 0:
+            fabric.print("Disabling torch.compile for MoE model due to compatibility issues in this environment.")
+            use_compile = False
+
+    if use_compile:
         patch_cudagraph_for_compile()
         model = torch.compile(
             model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
