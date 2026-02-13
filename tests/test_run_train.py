@@ -3,11 +3,11 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
+import run_train
+
 # Mock dependencies to avoid importing them if they are missing or heavy
 # But since we installed them, we can import run_train directly,
 # but we need to mock internal calls to avoid running real training.
-
-import run_train
 
 @patch("run_train.load_yaml")
 @patch("run_train.L.Fabric")
