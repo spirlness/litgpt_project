@@ -1,8 +1,7 @@
 import sys
 import unittest
-import importlib
-from unittest.mock import MagicMock, patch
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 # Add root to path so we can import run_train
 sys.path.append(str(Path(__file__).parent.parent))
@@ -58,7 +57,7 @@ class TestRunTrain(unittest.TestCase):
         with patch("run_train.load_yaml") as mock_load_yaml, \
              patch("run_train.build_optimizer") as mock_opt, \
              patch("run_train.torch.compile") as mock_compile, \
-             patch("pathlib.Path.exists", return_value=True) as mock_exists, \
+             patch("pathlib.Path.exists", return_value=True), \
              patch("run_train.patch_cudagraph_for_compile") as mock_patch_cuda:
 
             # Scenario: MoE model (n_expert=8) and compile=True requested
@@ -102,7 +101,7 @@ class TestRunTrain(unittest.TestCase):
         with patch("run_train.load_yaml") as mock_load_yaml, \
              patch("run_train.build_optimizer") as mock_opt, \
              patch("run_train.torch.compile") as mock_compile, \
-             patch("pathlib.Path.exists", return_value=True) as mock_exists, \
+             patch("pathlib.Path.exists", return_value=True), \
              patch("run_train.patch_cudagraph_for_compile") as mock_patch_cuda:
 
             model_cfg = {"model_config": {"block_size": 128}}
