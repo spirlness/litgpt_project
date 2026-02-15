@@ -155,6 +155,12 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     else:
         use_compile = opt_cfg.get("compile", False)
 
+    # Check for MoE model and disable compile if necessary
+    # This avoids issues with MoE compilation in this environment
+    if use_compile and model_cfg.get("n_expert", 0) > 0:
+        print("Disabling torch.compile for MoE model due to compatibility issues.")
+        use_compile = False
+
     compile_mode = args.compile_mode or opt_cfg.get("compile_mode", "default")
     compile_dynamic = (
         args.compile_dynamic if args.compile_dynamic is not None else opt_cfg.get("compile_dynamic", False)
