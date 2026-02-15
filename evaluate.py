@@ -1,10 +1,31 @@
 import argparse
+import os
 from pathlib import Path
 
 import numpy as np
 import torch
 import yaml
 from litgpt import GPT, Config
+from torch.utils.data import DataLoader, Dataset, RandomSampler
+
+
+class TextDataset(Dataset):
+    def __init__(self, file_path, block_size):
+        self.file_path = file_path
+        self.block_size = block_size
+        self.data = np.memmap(self.file_path, dtype=np.uint16, mode="r")
+        # Ensure we have enough data for at least one block
+        self.total_len = max(0, len(self.data) - self.block_size - 1)
+
+    def __len__(self):
+        return self.total_len
+
+    def __getitem__(self, idx):
+        # Retrieve chunk and convert to int64 for PyTorch
+        chunk = self.data[idx : idx + self.block_size + 1].astype(np.int64)
+        x = torch.from_numpy(chunk[:-1])
+        y = torch.from_numpy(chunk[1:])
+        return x, y
 
 
 def evaluate(
@@ -75,29 +96,49 @@ def evaluate(
 
     print(f"Found validation files: {[f.name for f in val_files]}")
 
-    data = np.memmap(val_files[0], dtype=np.uint16, mode="r")
-    total_len = len(data)
+    # We use the first file for validation as before
+    data_file = val_files[0]
+
+    # Check size first to determine block_size adjustments
+    temp_data = np.memmap(data_file, dtype=np.uint16, mode="r")
+    total_len = len(temp_data)
     if total_len < 2:
         print(f"Validation data too small: {total_len} tokens")
         return
 
     # Some smoke-test datasets can be shorter than the model context length.
     block_size = min(config.block_size, total_len - 1)
-    max_start = total_len - block_size - 1
-    if max_start < 0:
-        max_start = 0
 
     print(f"Validation data size: {total_len} tokens")
 
+    # Initialize Dataset and DataLoader
+    dataset = TextDataset(data_file, block_size)
+
+    if len(dataset) <= 0:
+         print(f"Dataset length {len(dataset)} is too small for block size {block_size}")
+         return
+
+    # Use RandomSampler with replacement to mimic original behavior and handle arbitrary max_batches
+    sampler = RandomSampler(dataset, replacement=True, num_samples=max_batches * batch_size)
+
+    num_workers = os.cpu_count() or 1
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        num_workers=num_workers,
+        pin_memory=(device != "cpu"),
+        persistent_workers=True if num_workers > 0 else False
+    )
+
     losses = []
 
-    print("Starting evaluation...")
+    print(f"Starting evaluation with {num_workers} workers...")
     with torch.no_grad():
-        for i in range(max_batches):
-            ix = torch.randint(0, max_start + 1, (batch_size,))
-            x = torch.stack([torch.from_numpy((data[i : i + block_size]).astype(np.int64)) for i in ix])
-            y = torch.stack([torch.from_numpy((data[i + 1 : i + 1 + block_size]).astype(np.int64)) for i in ix])
-
+        # Loop over dataloader. The sampler ensures we get max_batches * batch_size samples.
+        # So the dataloader will yield max_batches batches.
+        for i, (x, y) in enumerate(dataloader):
             x, y = x.to(device), y.to(device)
 
             logits = model(x)
