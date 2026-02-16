@@ -4,8 +4,8 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader, Dataset
 from litgpt import GPT, Config
+from torch.utils.data import DataLoader, Dataset
 
 
 class TextDataset(Dataset):
@@ -125,7 +125,7 @@ def evaluate(
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=num_workers > 0,
-        drop_last=True
+        drop_last=False
     )
 
     losses = []
