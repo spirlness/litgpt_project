@@ -1,6 +1,7 @@
 import sys
-from unittest.mock import MagicMock, patch
 import unittest
+from unittest.mock import MagicMock, patch
+
 import torch
 
 # Mock modules before import
@@ -19,7 +20,8 @@ sys.modules["src.fixed_text_files"] = MagicMock()
 sys.modules["src.utils"] = MagicMock()
 
 # Now import run_train
-import run_train
+import run_train  # noqa: E402
+
 
 class TestRunTrainCompileMoE(unittest.TestCase):
     @patch("run_train.load_yaml")
