@@ -1,29 +1,45 @@
+import importlib
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
 import torch
 
-# Mock modules before import
-sys.modules["lightning"] = MagicMock()
-sys.modules["litgpt"] = MagicMock()
-sys.modules["litgpt.config"] = MagicMock()
-sys.modules["litgpt.model"] = MagicMock()
-sys.modules["litgpt.tokenizer"] = MagicMock()
-sys.modules["torch_xla"] = MagicMock()
-sys.modules["torch_xla.core"] = MagicMock()
-sys.modules["torch_xla.core.xla_model"] = MagicMock()
-
-# Mock src modules
-sys.modules["src"] = MagicMock()
-sys.modules["src.fixed_text_files"] = MagicMock()
-sys.modules["src.utils"] = MagicMock()
-
-# Now import run_train
-import run_train  # noqa: E402
-
 
 class TestRunTrainCompileMoE(unittest.TestCase):
+    def setUp(self):
+        # Create a dictionary of mocked modules
+        self.mock_modules = {
+            "lightning": MagicMock(),
+            "litgpt": MagicMock(),
+            "litgpt.config": MagicMock(),
+            "litgpt.model": MagicMock(),
+            "litgpt.tokenizer": MagicMock(),
+            "torch_xla": MagicMock(),
+            "torch_xla.core": MagicMock(),
+            "torch_xla.core.xla_model": MagicMock(),
+            "src": MagicMock(),
+            "src.fixed_text_files": MagicMock(),
+            "src.utils": MagicMock(),
+        }
+
+        # Start patching sys.modules
+        self.patcher = patch.dict(sys.modules, self.mock_modules)
+        self.patcher.start()
+
+        # Import run_train inside the patched environment
+        if "run_train" in sys.modules:
+            importlib.reload(sys.modules["run_train"])
+        else:
+            importlib.import_module("run_train")
+        self.run_train = sys.modules["run_train"]
+
+    def tearDown(self):
+        self.patcher.stop()
+        # Clean up run_train from sys.modules to avoid side effects
+        if "run_train" in sys.modules:
+            del sys.modules["run_train"]
+
     @patch("run_train.load_yaml")
     @patch("run_train.L.Fabric")
     @patch("run_train.torch.compile")
@@ -83,7 +99,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
 
         # Run train
         try:
-            run_train.train(args.model_config, args.train_config, args)
+            self.run_train.train(args.model_config, args.train_config, args)
         except StopIteration:
             pass # Iterator exhausted
         except Exception as e:
@@ -143,7 +159,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         args.flash_attention_force = None
 
         try:
-            run_train.train(args.model_config, args.train_config, args)
+            self.run_train.train(args.model_config, args.train_config, args)
         except StopIteration:
             pass
 
