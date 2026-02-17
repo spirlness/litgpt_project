@@ -184,21 +184,9 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
 
     opt_cfg = train_cfg.get("optimization", {})
     # Check environment variable for compile override
-    env_compile_raw = os.environ.get("TORCH_COMPILE")
-    env_compile = None
-    if env_compile_raw is not None:
-        value = env_compile_raw.strip().lower()
-        truthy_values = {"1", "true", "yes", "on"}
-        falsy_values = {"0", "false", "no", "off"}
-        if value in truthy_values:
-            env_compile = True
-        elif value in falsy_values:
-            env_compile = False
-        else:
-            raise ValueError(
-                f"Invalid TORCH_COMPILE value: {env_compile_raw!r}. "
-                f"Expected one of {sorted(truthy_values | falsy_values)}."
-            )
+    env_compile = os.environ.get("TORCH_COMPILE")
+    if env_compile is not None:
+        env_compile = env_compile.lower() in ("1", "true", "yes", "on")
 
     if args.compile is not None:
         use_compile = args.compile
@@ -225,10 +213,12 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     )
     disable_math_fallback = opt_cfg.get("disable_math_fallback", False)
 
-    apply_runtime_config()
     configure_flash_attention(enable=True, disable_math_fallback=disable_math_fallback)
     if use_flash_attention or flash_attention_force:
         verify_flash_attention(force=flash_attention_force, verbose=True)
+
+    apply_runtime_config()
+    patch_flops_measurement()
 
     train_section = train_cfg.get("train", {})
     data_section = train_cfg.get("data", {})
