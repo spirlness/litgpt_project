@@ -105,37 +105,6 @@ def find_latest_checkpoint(out_dir: Path) -> Path | None:
     return candidates[-1]
 
 
-_UPLOAD_EXECUTOR = None
-
-
-def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: Path) -> None:
-    # Upload to Hugging Face Hub (Automatic Backup)
-    try:
-        from huggingface_hub import HfApi
-
-        api = HfApi()
-        print(f"Uploading step {step} to {repo_id}...")
-        # Upload folder content
-        api.upload_folder(
-            folder_path=str(checkpoint_dir),
-            repo_id=repo_id,
-            path_in_repo=f"step-{step:08d}",
-            repo_type="model",
-            commit_message=f"Upload checkpoint step {step}",
-        )
-        print(f"Successfully uploaded step {step} to Hugging Face Hub")
-    except Exception as e:
-        print(f"Failed to upload checkpoint to Hugging Face Hub: {e}")
-        print("Continuing training despite upload failure...")
-
-    import shutil
-
-    all_checkpoints = sorted(out_dir.glob("step-*"))
-    for old_checkpoint in all_checkpoints[:-1]:
-        if old_checkpoint.is_dir():
-            shutil.rmtree(old_checkpoint)
-
-
 def save_checkpoint(
     fabric: L.Fabric,
     out_dir: Path,
@@ -215,7 +184,6 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
         verify_flash_attention(force=flash_attention_force, verbose=True)
 
     apply_runtime_config()
-    patch_flops_measurement()
 
     train_section = train_cfg.get("train", {})
     data_section = train_cfg.get("data", {})
@@ -262,12 +230,15 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
         # Only patch cudagraph for non-MoE models as MoE has dynamic control flow
         if model_cfg.get("n_expert", 0) == 0:
             patch_cudagraph_for_compile()
-        model = torch.compile(
-            model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
-        )
-        fabric.print(
-            f"Model compiled with mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}"
-        )
+            model = torch.compile(
+                model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
+            )
+            fabric.print(
+                f"Model compiled with mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}"
+            )
+        else:
+            fabric.print("Disabling torch.compile for MoE model due to compatibility issues.")
+            use_compile = False
 
     train_data_path = data_section.get("init_args", {}).get("train_data_path")
     val_data_path = data_section.get("init_args", {}).get("val_data_path")
