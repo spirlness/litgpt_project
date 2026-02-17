@@ -96,7 +96,17 @@ def generate(
     if "norm_eps" in model_config_dict:
         model_config_dict["norm_eps"] = float(model_config_dict["norm_eps"])
 
+    # Extract MoE specific args that are not in LitGPT Config
+    moe_args = {}
+    for key in ["moe_aux_loss_weight", "moe_router_stats"]:
+        if key in model_config_dict:
+            moe_args[key] = model_config_dict.pop(key)
+
     config = Config(**model_config_dict)
+
+    # Inject MoE args back into config object
+    for key, value in moe_args.items():
+        setattr(config, key, value)
 
     tokenizer_dir = Path("data/tokenizer")
     if not tokenizer_dir.exists():
@@ -128,8 +138,14 @@ def generate(
 
     model.to(device)
     model.eval()
+    model.set_kv_cache(batch_size=1)
 
     encoded = tokenizer.encode(prompt, device=torch.device(device))
+    if encoded.size(0) > config.block_size:
+        print(f"Warning: Prompt length {encoded.size(0)} exceeds block size {config.block_size}. Truncating.")
+        encoded = encoded[-config.block_size:]
+
+    prompt_length = encoded.size(0)
 
     print("\nGenerating...")
     print("-" * 50)
@@ -139,17 +155,17 @@ def generate(
 
     t0 = time.perf_counter()
     generated_tokens = 0
+
+    # Prefill the model with the prompt
+    with torch.no_grad():
+        # Using input_pos for position encoding
+        input_pos = torch.arange(prompt_length, device=device)
+        logits = model(encoded.unsqueeze(0), input_pos)
+
+    # Get the last token's logits for the next prediction
+    logits = logits[0, -1, :] / temperature
+
     for i in range(max_new_tokens):
-        if encoded.size(0) > config.block_size:
-            idx_cond = encoded[-config.block_size :]
-        else:
-            idx_cond = encoded
-
-        with torch.no_grad():
-            logits = model(idx_cond.unsqueeze(0))
-
-        logits = logits[0, -1, :] / temperature
-
         if top_k is not None:
             v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
             logits[logits < v[[-1]]] = -float("Inf")
@@ -160,8 +176,29 @@ def generate(
         token_str = tokenizer.decode(idx_next)
         streamer.put(token_str)
 
+        # Append the new token to the sequence
         encoded = torch.cat((encoded, idx_next))
         generated_tokens += 1
+
+        # Check if we reached block size limit.
+        # LitGPT KV cache handles rotating/shifting if implemented, but here we just stop or truncated.
+        # Actually, let's just break if we exceed block size to be safe and simple,
+        # or we implement sliding window manually (clearing cache).
+        # But for now, let's assume max_new_tokens + prompt_length <= block_size usually.
+        # If it exceeds, we can continue but performance might drop if we don't handle it well.
+        # The standard LitGPT generate pattern uses input_pos incrementing.
+
+        if encoded.size(0) >= config.block_size:
+            print("\nReached block size limit, stopping generation.")
+            break
+
+        # Next step generation
+        if i < max_new_tokens - 1:
+            input_pos = torch.tensor([prompt_length + i], device=device)
+            with torch.no_grad():
+                logits = model(idx_next.unsqueeze(0), input_pos)
+
+            logits = logits[0, -1, :] / temperature
 
     t1 = time.perf_counter()
     streamer.close()
