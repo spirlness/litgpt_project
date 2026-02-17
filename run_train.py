@@ -66,11 +66,8 @@ def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: 
 
     # Async cleanup: Only delete checkpoints that are superseded by a newer one.
     # This avoids race conditions where a queued task deletes a newer checkpoint that hasn't been uploaded yet.
-    all_checkpoints = sorted(out_dir.glob("step-*"))
-    if not all_checkpoints:
-        return
+    all_checkpoints = out_dir.glob("step-*")
 
-    # Checkpoints are sorted by step number (lexically, due to zero-padding)
     for checkpoint in all_checkpoints:
         # Delete if it's older than the current one being processed (stale/abandoned).
         # We only delete checkpoints that are strictly older than the one we just uploaded.
