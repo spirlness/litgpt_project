@@ -6,25 +6,21 @@ import numpy as np
 import torch
 import yaml
 from litgpt import GPT, Config
-from torch.utils.data import DataLoader, Dataset, RandomSampler
+from torch.utils.data import DataLoader, Dataset
 
 
 class TextDataset(Dataset):
-    def __init__(self, file_path, block_size):
+    def __init__(self, file_path: Path, block_size: int):
         self.file_path = file_path
         self.block_size = block_size
-        self.data = np.memmap(self.file_path, dtype=np.uint16, mode="r")
-        # Ensure we have enough data for at least one block
-        self.total_len = max(0, len(self.data) - self.block_size - 1)
+        self.data = np.memmap(file_path, dtype=np.uint16, mode="r")
 
     def __len__(self):
-        return self.total_len
+        return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        # Retrieve chunk and convert to int64 for PyTorch
-        chunk = self.data[idx : idx + self.block_size + 1].astype(np.int64)
-        x = torch.from_numpy(chunk[:-1])
-        y = torch.from_numpy(chunk[1:])
+        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
+        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
         return x, y
 
 
@@ -34,6 +30,7 @@ def evaluate(
     batch_size: int = 8,
     max_batches: int = 100,
     device: str = "auto",
+    num_workers: int = 4,
 ):
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -62,7 +59,18 @@ def evaluate(
         loaded = yaml.safe_load(f) or {}
 
     model_config_dict = loaded.get("model_config", loaded)
+
+    # Extract MoE specific args that are not in LitGPT Config
+    moe_args = {}
+    for key in ["moe_aux_loss_weight", "moe_router_stats"]:
+        if key in model_config_dict:
+            moe_args[key] = model_config_dict.pop(key)
+
     config = Config(**model_config_dict)
+
+    # Inject MoE args back into config object
+    for key, value in moe_args.items():
+        setattr(config, key, value)
 
     model = GPT(config)
 
@@ -96,12 +104,11 @@ def evaluate(
 
     print(f"Found validation files: {[f.name for f in val_files]}")
 
-    # We use the first file for validation as before
-    data_file = val_files[0]
-
-    # Check size first to determine block_size adjustments
-    temp_data = np.memmap(data_file, dtype=np.uint16, mode="r")
+    # Check total length first
+    temp_data = np.memmap(val_files[0], dtype=np.uint16, mode="r")
     total_len = len(temp_data)
+    del temp_data
+
     if total_len < 2:
         print(f"Validation data too small: {total_len} tokens")
         return
@@ -111,34 +118,30 @@ def evaluate(
 
     print(f"Validation data size: {total_len} tokens")
 
-    # Initialize Dataset and DataLoader
-    dataset = TextDataset(data_file, block_size)
-
-    if len(dataset) <= 0:
-         print(f"Dataset length {len(dataset)} is too small for block size {block_size}")
-         return
-
-    # Use RandomSampler with replacement to mimic original behavior and handle arbitrary max_batches
-    sampler = RandomSampler(dataset, replacement=True, num_samples=max_batches * batch_size)
-
-    num_workers = os.cpu_count() or 1
-
+    dataset = TextDataset(val_files[0], block_size=block_size)
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
-        sampler=sampler,
+        shuffle=True,
         num_workers=num_workers,
-        pin_memory=(device != "cpu"),
-        persistent_workers=True if num_workers > 0 else False
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        drop_last=False
     )
 
     losses = []
+    print("Starting evaluation...")
 
-    print(f"Starting evaluation with {num_workers} workers...")
+    data_iter = iter(dataloader)
+
     with torch.no_grad():
-        # Loop over dataloader. The sampler ensures we get max_batches * batch_size samples.
-        # So the dataloader will yield max_batches batches.
-        for i, (x, y) in enumerate(dataloader):
+        for i in range(max_batches):
+            try:
+                x, y = next(data_iter)
+            except StopIteration:
+                data_iter = iter(dataloader)
+                x, y = next(data_iter)
+
             x, y = x.to(device), y.to(device)
 
             logits = model(x)
@@ -166,6 +169,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-batches", type=int, default=100)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--num-workers", type=int, default=4)
     args = parser.parse_args()
 
     evaluate(
@@ -174,4 +178,5 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         max_batches=args.max_batches,
         device=args.device,
+        num_workers=args.num_workers,
     )

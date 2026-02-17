@@ -1,5 +1,6 @@
 # Copyright Lightning AI. Licensed under the Apache License 2.0, see LICENSE file.
 import glob
+import os
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -58,12 +59,20 @@ class FixedTextFiles(DataModule):
             print(f"\n跳过数据预处理：在 {self.out_path_train} 和 {self.out_path_val} 中找到了预处理数据。\n")
             return
 
-        train_files = sorted(glob.glob(str(self.train_data_path / "*.txt")))
+        train_files = sorted(
+            entry.path
+            for entry in os.scandir(self.train_data_path)
+            if entry.name.endswith(".txt")
+        )
         assert len(train_files) > 0, f"在训练数据 {train_files} 中未找到.txt文件"
 
         if self.val_data_path is not None:
             self.val_data_path = Path(self.val_data_path)
-            val_files = sorted(glob.glob(str(self.val_data_path / "*.txt")))
+            val_files = sorted(
+                entry.path
+                for entry in os.scandir(self.val_data_path)
+                if entry.name.endswith(".txt")
+            )
             assert len(val_files) > 0, f"在验证数据 {val_files} 中未找到.txt文件"
         # 训练/测试分割。让我们只使用分片0作为测试分割，其余作为训练
         else:
@@ -72,7 +81,7 @@ class FixedTextFiles(DataModule):
             val_files = [val_files]
 
         # 使用配置中指定的工作者数量，而不是几乎所有CPU核心
-        use_workers = min(self.num_workers, len(train_files))  # 使用配置的num_workers
+        use_workers = self.num_workers  # 使用配置的num_workers
         if not Path(self.out_path_train).is_dir():
             print(f"处理训练数据，使用 {use_workers} 个工作者...")
             if self.tokenizer is not None:
@@ -92,7 +101,7 @@ class FixedTextFiles(DataModule):
                 " `litgpt pretrain` 命令以来发生了变化，请删除预处理文件以触发"
                 f"重新处理：`rm -rf {self.out_path_train}`\n"
             )
-        use_workers = min(self.num_workers, len(val_files))  # 使用配置的num_workers
+        use_workers = self.num_workers  # 使用配置的num_workers
         if not Path(self.out_path_val).is_dir():
             print(f"处理验证数据，使用 {use_workers} 个工作者...")
             if self.tokenizer is not None:
