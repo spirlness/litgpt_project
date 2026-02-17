@@ -1,11 +1,15 @@
 import argparse
 from pathlib import Path
+import warnings
 
 import numpy as np
 import torch
 import yaml
 from litgpt import GPT, Config
 from torch.utils.data import DataLoader, Dataset
+
+# Suppress the warning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors.
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
 
 
 class TextDataset(Dataset):
@@ -18,8 +22,8 @@ class TextDataset(Dataset):
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
-        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
+        x = torch.from_numpy(self.data[idx : idx + self.block_size].view(np.int16))
+        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].view(np.int16))
         return x, y
 
 
@@ -142,6 +146,11 @@ def evaluate(
                 x, y = next(data_iter)
 
             x, y = x.to(device), y.to(device)
+            # Correct the uint16 data viewed as int16
+            x = x.long()
+            y = y.long()
+            x.bitwise_and_(0xffff)
+            y.bitwise_and_(0xffff)
 
             logits = model(x)
 
