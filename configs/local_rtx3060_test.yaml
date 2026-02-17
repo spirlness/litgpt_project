@@ -1,0 +1,46 @@
+# Config for local RTX 3060 (6GB VRAM) - Optimized
+out_dir: ./checkpoints_test
+precision: 16-mixed
+tokenizer_dir: ./data/tokenizer
+
+# Single GPU settings
+strategy: auto
+devices: 1
+num_nodes: 1
+
+data:
+  class_path: litgpt.data.TextFiles
+  init_args:
+    train_data_path: ./data/custom_text/train
+    val_data_path: ./data/custom_text/val
+    num_workers: 0  # Set to 0 for Windows compatibility
+
+train:
+  global_batch_size: 16  # Reduced for testing
+  micro_batch_size: 1    # Conservative for 6GB VRAM with compile+flash
+  log_interval: 1
+  max_tokens: 10000      # Short run for testing
+  lr_warmup_steps: 5
+  save_interval: 50
+  gradient_checkpointing: true
+  max_norm: 1.0
+  max_seq_length: 512
+
+eval:
+  interval: 50
+  final_validation: false
+
+resume: null
+
+optimization:
+  compile: true          # Enable torch.compile
+  flash_attention: true  # Enable Flash Attention 2
+  compile_mode: "default" # Can try reduce-overhead if default works
+
+logger_name: csv
+
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 0.0003
+    weight_decay: 0.01

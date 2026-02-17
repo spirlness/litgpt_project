@@ -152,83 +152,85 @@ def apply_runtime_config() -> None:
         torch.backends.cuda.enable_math_sdp(True)
 
 
-def patch_cudagraph_for_compile() -> None:
-    if not hasattr(torch.compiler, "cudagraph_mark_step_begin"):
-        return
-
+def validate(fabric, model, val_dataloader, max_iters, verbose=True):
+    """
+    Custom validation loop with CUDAGraph support.
+    Originally patched into litgpt.pretrain.validate.
+    """
     import litgpt.pretrain
-    import litgpt.utils
+    
+    fabric.barrier()
+    if verbose:
+        fabric.print("Validating ...")
+    model.eval()
 
-    _orig_cycle_next = litgpt.utils.CycleIterator.__next__
+    losses = []
+    # Note: cycle_iterator isn't strictly needed if we just iterate normally, 
+    # but for CUDAGraphs we specifically need to mark steps.
+    for k, batch in enumerate(val_dataloader):
+        if k >= max_iters:
+            break
+        if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+             torch.compiler.cudagraph_mark_step_begin()
+             
+        input_ids = batch[:, 0 : model.max_seq_length].contiguous().long()
+        targets = batch[:, 1 : (model.max_seq_length + 1)].contiguous().long()
+        logits = model(input_ids)
+        loss = litgpt.pretrain.chunked_cross_entropy(logits, targets)
+        losses.append(loss)
 
-    def _cycle_next(self):
-        torch.compiler.cudagraph_mark_step_begin()
-        return _orig_cycle_next(self)
-
-    litgpt.utils.CycleIterator.__next__ = _cycle_next
-
-    _orig_validate = litgpt.pretrain.validate
-
-    def _validate(fabric, model, val_dataloader, max_iters, verbose=True):
-        fabric.barrier()
-        if verbose:
-            fabric.print("Validating ...")
-        model.eval()
-
-        losses = []
-        for k, batch in enumerate(val_dataloader):
-            if k >= max_iters:
-                break
-            torch.compiler.cudagraph_mark_step_begin()
-            input_ids = batch[:, 0 : model.max_seq_length].contiguous().long()
-            targets = batch[:, 1 : (model.max_seq_length + 1)].contiguous().long()
-            logits = model(input_ids)
-            loss = litgpt.pretrain.chunked_cross_entropy(logits, targets)
-            losses.append(loss)
-
-        if losses:
-            val_loss = torch.stack(losses).mean()
-        else:
-            device = next(model.parameters()).device
-            val_loss = torch.tensor(float("nan"), device=device)
-        model.train()
-        fabric.barrier()
-        return val_loss
-
-    litgpt.pretrain.validate = _validate
+    if losses:
+        val_loss = torch.stack(losses).mean()
+    else:
+        # device = next(model.parameters()).device
+        # val_loss = torch.tensor(float("nan"), device=device)
+        # Safer to use fabric.device
+        val_loss = torch.tensor(float("nan"), device=fabric.device)
+        
+    model.train()
+    fabric.barrier()
+    return val_loss
 
 
-def patch_gradient_checkpointing() -> None:
-    from litgpt.model import Block
-
-    disable_ckpt_env = os.environ.get("DISABLE_GRADIENT_CHECKPOINTING", "").lower()
-    if disable_ckpt_env in ("1", "true", "yes", "on"):
-        if hasattr(Block, "_orig_forward"):
-            setattr(Block, "forward", getattr(Block, "_orig_forward"))
-        setattr(Block, "_ckpt_patched", False)
-        print("Gradient checkpointing patch skipped due to DISABLE_GRADIENT_CHECKPOINTING env")
+def apply_gradient_checkpointing(model: torch.nn.Module) -> None:
+    """
+    Apply gradient checkpointing to the model's blocks using instance-based wrapping.
+    This avoids global monkey patching of the Block class.
+    """
+    # Assuming model is litgpt.model.GPT or similar structure
+    if hasattr(model, "transformer") and hasattr(model.transformer, "h"):
+        blocks = model.transformer.h
+    elif hasattr(model, "module") and hasattr(model.module, "transformer"):
+        # Handle wrapped models (DDP, etc)
+        blocks = model.module.transformer.h
+    else:
+        print("Warning: Could not find transformer blocks to apply gradient checkpointing.")
         return
 
-    if getattr(Block, "_ckpt_patched", False):
-        return
+    from functools import partial
+    
+    # We need to wrap the forward method of each block instance
+    for block in blocks:
+        # Create a bound method wrapper that calls checkpoint
+        def _checkpointed_forward(self, *args, **kwargs):
+             # We use the ORIGINAL forward method of the class, bound to 'self' implicitly 
+             # by calling it on 'self', but we need to avoid recursion since we are overwriting self.forward.
+             # So we need to access the class method.
+             return torch.utils.checkpoint.checkpoint(
+                 type(self).forward, 
+                 self, 
+                 *args, 
+                 **kwargs, 
+                 use_reentrant=False
+             )
+        
+        # Bind the new method to the instance
+        # Use types.MethodType to bind the function to the instance
+        import types
+        block.forward = types.MethodType(_checkpointed_forward, block)
+        
+    print("Gradient checkpointing applied to transformer blocks.")
 
-    _orig_block_forward = Block.forward
-    setattr(Block, "_orig_forward", _orig_block_forward)
-
-    def _checkpointed_block_forward(self, *args, **kwargs):
-        return torch.utils.checkpoint.checkpoint(_orig_block_forward, self, *args, **kwargs, use_reentrant=False)
-
-    setattr(Block, "forward", _checkpointed_block_forward)
-    setattr(Block, "_ckpt_patched", True)
-
-
-def restore_gradient_checkpointing() -> None:
-    from litgpt.model import Block
-
-    orig_forward = getattr(Block, "_orig_forward", None)
-    if orig_forward is not None:
-        setattr(Block, "forward", orig_forward)
-    setattr(Block, "_ckpt_patched", False)
 
 
 def get_latest_metrics_csv(out_dir: Path) -> Optional[Path]:

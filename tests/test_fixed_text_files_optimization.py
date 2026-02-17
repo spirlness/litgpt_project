@@ -35,7 +35,7 @@ sys.modules["torch.utils.data"].DataLoader = MagicMock()
 # Now import the module under test
 # We need to make sure src is importable
 sys.path.append(os.getcwd())
-from src.fixed_text_files import FixedTextFiles
+from src.litgpt_moe.fixed_text_files import FixedTextFiles, collate_fixed_length
 
 class TestFixedTextFilesOptimization(unittest.TestCase):
     def setUp(self):

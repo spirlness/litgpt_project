@@ -2,6 +2,11 @@ out_dir: ./checkpoints
 precision: bf16-mixed
 tokenizer_dir: ./data/tokenizer
 
+# Single GPU settings
+strategy: auto
+devices: 1
+num_nodes: 1
+
 data:
   class_path: litgpt.data.TextFiles
   init_args:
@@ -12,16 +17,16 @@ data:
 train:
   global_batch_size: 128
   log_interval: 1
-  max_tokens: 320000
-  lr_warmup_steps: 5
-  micro_batch_size: 4
+  max_tokens: 10000000
+  lr_warmup_steps: 100
+  micro_batch_size: 2
   save_interval: 500
   gradient_checkpointing: true
   max_norm: 1.0
   max_seq_length: 512
 
 eval:
-  interval: 0
+  interval: 1000
   final_validation: false
 
 resume: auto
@@ -30,7 +35,7 @@ resume: auto
 optimization:
   # torch.compile settings
   compile: true
-  compile_mode: reduce-overhead  # Options: default, reduce-overhead, max-autotune
+  compile_mode: default  # Options: default, reduce-overhead, max-autotune
   compile_dynamic: true      # Enable dynamic shapes (for variable sequence lengths)
   compile_fullgraph: false    # Force full graph compilation (errors on graph breaks)
 

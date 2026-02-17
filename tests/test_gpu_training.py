@@ -155,7 +155,7 @@ class TestBasicGPUTraining:
 class TestFlashAttention:
     @pytest.mark.skipif(SKIP_GPU, reason=GPU_SKIP_REASON)
     def test_flash_attention_availability(self, cleanup_cuda):
-        from src.utils import check_flash_attention
+        from src.litgpt_moe.fixed_text_files import FixedTextFilesh_attention
 
         info = check_flash_attention()
         major, minor = torch.cuda.get_device_capability()

@@ -43,14 +43,14 @@ python prepare_data.py --data-dir data/custom_text
 
 #### 💻 本地单卡训练 (推荐 RTX 3060/4060 等)
 
-使用我们专门优化的配置文件 `configs/local_rtx3060.yaml`，该配置针对 6GB+ 显存进行了优化（单卡、低 Batch Size、梯度累积）。
+使用我们专门优化的配置文件 `configs/optimized_rtx3060.yaml`，该配置针对 6GB+ 显存进行了优化（单卡、低 Batch Size、梯度累积）。
 
 ```bash
 # 训练完整模型 (200M 参数)
-python run_train.py --train-config configs/local_rtx3060.yaml
+python run_train.py --model-config configs/moe_200m.yaml --train-config configs/optimized_rtx3060.yaml
 
 # 快速调试 (30M 参数，启动更快)
-python run_train.py --model-config configs/moe_30m_debug.yaml --train-config configs/local_rtx3060.yaml
+python run_train.py --model-config configs/moe_30m_debug.yaml --train-config configs/optimized_rtx3060.yaml
 ```
 
 #### ☁️ 云端/多卡训练
@@ -75,7 +75,7 @@ python evaluate.py --checkpoint_dir checkpoints/final
 ```text
 litgpt_project/
 ├── configs/                 # 配置文件目录
-│   ├── local_rtx3060.yaml   # [新增] 本地单卡优化配置
+│   ├── optimized_rtx3060.yaml # [新增] 本地单卡优化配置
 │   ├── kaggle_t4_ddp.yaml   # Kaggle 双卡 DDP 配置
 │   ├── moe_30m_debug.yaml   # 调试用小模型配置
 │   └── moe_200m.yaml        # 默认 200M 模型配置
@@ -85,11 +85,15 @@ litgpt_project/
 ├── scripts/                 # 辅助脚本
 │   ├── download_tinystories.py # 数据集下载
 │   ├── generate_index_json.py  # 索引生成工具
-│   └── test_compile.py         # 编译测试
+│   ├── test_compile.py         # 编译测试
+│   ├── env_sanity_check.py     # 环境检查
+│   └── verify_flash.py         # Flash Attention 验证
 ├── src/                     # 源代码模块
-│   ├── fixed_text_files.py     # 修复版数据加载器
-│   ├── wandb_dataset.py        # W&B 数据集集成
-│   └── utils.py                # 通用工具
+│   └── litgpt_moe/          # [新增] 核心包
+│       ├── fixed_text_files.py     # 修复版数据加载器
+│       ├── wandb_dataset.py        # W&B 数据集集成
+│       ├── config.py               # MoE 配置类
+│       └── utils.py                # 通用工具
 ├── prepare_data.py          # 数据预处理入口
 ├── run_train.py             # 训练主程序
 ├── generate.py              # 生成脚本
@@ -111,7 +115,7 @@ litgpt_project/
 
 ### 模型架构
 
-默认模型配置 (`moe_200m.yaml`)：
+默认模型配置 (`configs/moe_200m.yaml`)：
 - **总参数量**: ~200M
 - **专家数**: 8 (Top-2 激活)
 - **层数**: 12

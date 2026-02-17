@@ -29,12 +29,12 @@ from litgpt.config import Config
 from litgpt.model import GPT
 from litgpt.tokenizer import Tokenizer
 
-from src.fixed_text_files import FixedTextFiles
-from src.utils import (
+from src.litgpt_moe.config import MoEConfig
+from src.litgpt_moe.fixed_text_files import FixedTextFiles
+from src.litgpt_moe.utils import (
     apply_runtime_config,
     configure_flash_attention,
-    patch_cudagraph_for_compile,
-    patch_gradient_checkpointing,
+    apply_gradient_checkpointing,
     verify_flash_attention,
 )
 
@@ -160,7 +160,8 @@ def save_checkpoint(
 
     if fabric.is_global_zero:
         repo_id = "lyyh/MOE-200M"
-        _UPLOAD_EXECUTOR.submit(_upload_and_cleanup, checkpoint_dir, repo_id, step, out_dir)
+        if _UPLOAD_EXECUTOR:
+            _UPLOAD_EXECUTOR.submit(_upload_and_cleanup, checkpoint_dir, repo_id, step, out_dir)
 
 
 def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) -> None:
@@ -215,7 +216,7 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
         verify_flash_attention(force=flash_attention_force, verbose=True)
 
     apply_runtime_config()
-    patch_flops_measurement()
+    # patch_flops_measurement() # Not imported and seemingly undefined
 
     train_section = train_cfg.get("train", {})
     data_section = train_cfg.get("data", {})
@@ -231,8 +232,9 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     fabric.launch()
 
     if grad_checkpointing:
-        patch_gradient_checkpointing()
-        fabric.print("Enabled gradient checkpointing via Block.forward patch")
+        # patch_gradient_checkpointing()
+        # fabric.print("Enabled gradient checkpointing via Block.forward patch")
+        pass # Will be applied to model instance later
 
     out_dir = Path(train_cfg.get("out_dir", "checkpoints"))
     tokenizer_dir = Path(train_cfg.get("tokenizer_dir", "data/tokenizer"))
@@ -244,11 +246,16 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     if not tokenizer_dir.exists():
         raise FileNotFoundError(f"Tokenizer not found at {tokenizer_dir}. Run prepare_data.py first.")
 
-    config = Config(**model_cfg)
-
-    # Inject MoE args back into config object
-    for key, value in moe_args.items():
-        setattr(config, key, value)
+    # config = Config(**model_cfg)
+    #
+    # # Inject MoE args back into config object
+    # for key, value in moe_args.items():
+    #     setattr(config, key, value)
+    
+    # Use MoEConfig directly, which handles moe_args via inheritance if passed in model_cfg
+    # We re-merge moe_args back into model_cfg if they were popped, or just pass model_cfg if it contains them
+    model_cfg.update(moe_args)
+    config = MoEConfig(**model_cfg)
 
     model = GPT(config)
     max_seq_length = int(train_section.get("max_seq_length", config.block_size))
@@ -258,10 +265,14 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
 
     model, optimizer = fabric.setup(model, optimizer)
 
+    if grad_checkpointing:
+        apply_gradient_checkpointing(model)
+        fabric.print("Enabled gradient checkpointing via instance wrapping")
+
     if use_compile:
         # Only patch cudagraph for non-MoE models as MoE has dynamic control flow
-        if model_cfg.get("n_expert", 0) == 0:
-            patch_cudagraph_for_compile()
+        # if model_cfg.get("n_expert", 0) == 0:
+        #     patch_cudagraph_for_compile()
         model = torch.compile(
             model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
         )

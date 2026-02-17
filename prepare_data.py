@@ -9,7 +9,7 @@ log_dataset_to_wandb = None
 HAS_WANDB_DATASET = False
 
 try:
-    import src.wandb_dataset as wandb_dataset  # type: ignore
+    import src.litgpt_moe.wandb_dataset as wandb_dataset  # type: ignore
 
     log_dataset_to_wandb = wandb_dataset.log_dataset_to_wandb
     HAS_WANDB_DATASET = True

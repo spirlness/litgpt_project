@@ -4,8 +4,11 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
-from litgpt import GPT, Config
+from litgpt.config import Config
+from litgpt.model import GPT
+from litgpt.tokenizer import Tokenizer
 from torch.utils.data import DataLoader, Dataset
+from src.litgpt_moe.config import MoEConfig
 
 
 class TextDataset(Dataset):
@@ -65,11 +68,15 @@ def evaluate(
         if key in model_config_dict:
             moe_args[key] = model_config_dict.pop(key)
 
-    config = Config(**model_config_dict)
+    # config = Config(**model_config_dict)
+    #
+    # # Inject MoE args back into config object
+    # for key, value in moe_args.items():
+    #     setattr(config, key, value)
 
-    # Inject MoE args back into config object
-    for key, value in moe_args.items():
-        setattr(config, key, value)
+    # Re-integrate popped MoE args and use MoEConfig
+    model_config_dict.update(moe_args)
+    config = MoEConfig(**model_config_dict)
 
     model = GPT(config)
 

@@ -1,9 +1,26 @@
-# Data
-data/
+# Model checkpoints and weights
 checkpoints/
 *.pth
 *.bin
 *.pt
+*.ckpt
+*.safetensors
+*.h5
+*.gguf
+*.onnx
+
+# Data and Artifacts
+data/
+downloads/
+!data/README.md  # Keep README if it exists
+
+# Logs and Debug
+*.log
+wandb/
+lightning_logs/
+out/
+profiler/
+crash_reports/
 
 # Python
 __pycache__/
