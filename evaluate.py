@@ -5,6 +5,22 @@ import numpy as np
 import torch
 import yaml
 from litgpt import GPT, Config
+from torch.utils.data import DataLoader, Dataset
+
+
+class TextDataset(Dataset):
+    def __init__(self, file_path: Path, block_size: int):
+        self.file_path = file_path
+        self.block_size = block_size
+        self.data = np.memmap(file_path, dtype=np.uint16, mode="r")
+
+    def __len__(self):
+        return len(self.data) - self.block_size
+
+    def __getitem__(self, idx):
+        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
+        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
+        return x, y
 
 
 def evaluate(
@@ -13,6 +29,7 @@ def evaluate(
     batch_size: int = 8,
     max_batches: int = 100,
     device: str = "auto",
+    num_workers: int = 4,
 ):
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -41,7 +58,18 @@ def evaluate(
         loaded = yaml.safe_load(f) or {}
 
     model_config_dict = loaded.get("model_config", loaded)
+
+    # Extract MoE specific args that are not in LitGPT Config
+    moe_args = {}
+    for key in ["moe_aux_loss_weight", "moe_router_stats"]:
+        if key in model_config_dict:
+            moe_args[key] = model_config_dict.pop(key)
+
     config = Config(**model_config_dict)
+
+    # Inject MoE args back into config object
+    for key, value in moe_args.items():
+        setattr(config, key, value)
 
     model = GPT(config)
 
@@ -75,28 +103,43 @@ def evaluate(
 
     print(f"Found validation files: {[f.name for f in val_files]}")
 
-    data = np.memmap(val_files[0], dtype=np.uint16, mode="r")
-    total_len = len(data)
+    # Check total length first
+    temp_data = np.memmap(val_files[0], dtype=np.uint16, mode="r")
+    total_len = len(temp_data)
+    del temp_data
+
     if total_len < 2:
         print(f"Validation data too small: {total_len} tokens")
         return
 
     # Some smoke-test datasets can be shorter than the model context length.
     block_size = min(config.block_size, total_len - 1)
-    max_start = total_len - block_size - 1
-    if max_start < 0:
-        max_start = 0
 
     print(f"Validation data size: {total_len} tokens")
 
-    losses = []
+    dataset = TextDataset(val_files[0], block_size=block_size)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        drop_last=False
+    )
 
+    losses = []
     print("Starting evaluation...")
+
+    data_iter = iter(dataloader)
+
     with torch.no_grad():
         for i in range(max_batches):
-            ix = torch.randint(0, max_start + 1, (batch_size,))
-            x = torch.stack([torch.from_numpy((data[i : i + block_size]).astype(np.int64)) for i in ix])
-            y = torch.stack([torch.from_numpy((data[i + 1 : i + 1 + block_size]).astype(np.int64)) for i in ix])
+            try:
+                x, y = next(data_iter)
+            except StopIteration:
+                data_iter = iter(dataloader)
+                x, y = next(data_iter)
 
             x, y = x.to(device), y.to(device)
 
@@ -125,6 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-batches", type=int, default=100)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--num-workers", type=int, default=4)
     args = parser.parse_args()
 
     evaluate(
@@ -133,4 +177,5 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         max_batches=args.max_batches,
         device=args.device,
+        num_workers=args.num_workers,
     )
