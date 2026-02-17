@@ -1,7 +1,7 @@
-import shutil
-import time
 import tempfile
+import time
 from pathlib import Path
+
 
 def setup_checkpoints(base_dir, num_checkpoints=20000):
     print(f"Setting up {num_checkpoints} dummy checkpoints in {base_dir}...")

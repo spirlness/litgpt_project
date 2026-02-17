@@ -1,9 +1,9 @@
 
-import sys
-import unittest
-import shutil
-import tempfile
 import os
+import shutil
+import sys
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -35,7 +35,8 @@ sys.modules["torch.utils.data"].DataLoader = MagicMock()
 # Now import the module under test
 # We need to make sure src is importable
 sys.path.append(os.getcwd())
-from src.fixed_text_files import FixedTextFiles
+from src.fixed_text_files import FixedTextFiles  # noqa: E402
+
 
 class TestFixedTextFilesOptimization(unittest.TestCase):
     def setUp(self):
@@ -61,7 +62,7 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         module.tokenizer = MagicMock() # Mock tokenizer
 
         # Mock validate_tokenizer in the module namespace or patch
-        with patch("src.fixed_text_files.validate_tokenizer") as mock_validate:
+        with patch("src.fixed_text_files.validate_tokenizer"):
             # Mock litdata.optimize
             with patch("litdata.optimize") as mock_optimize:
                 # Need to mock os.path.isdir for output paths to force processing
@@ -112,7 +113,7 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         module = FixedTextFiles(train_data_path=self.train_dir, val_data_path=val_dir, num_workers=2)
         module.tokenizer = MagicMock()
 
-        with patch("src.fixed_text_files.validate_tokenizer") as mock_validate:
+        with patch("src.fixed_text_files.validate_tokenizer"):
             with patch("litdata.optimize") as mock_optimize:
                 module.prepare_data()
 

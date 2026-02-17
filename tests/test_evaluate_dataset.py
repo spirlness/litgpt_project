@@ -1,15 +1,15 @@
-import torch
+import os
+import sys
+
 import numpy as np
 import pytest
-from pathlib import Path
-import warnings
-import sys
-import os
+import torch
 
 # Add root to sys.path
 sys.path.append(os.getcwd())
 
 from evaluate import TextDataset
+
 
 @pytest.fixture
 def dummy_data_file(tmp_path):

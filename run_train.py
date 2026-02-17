@@ -215,7 +215,6 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
         verify_flash_attention(force=flash_attention_force, verbose=True)
 
     apply_runtime_config()
-    patch_flops_measurement()
 
     train_section = train_cfg.get("train", {})
     data_section = train_cfg.get("data", {})
@@ -262,9 +261,12 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
         # Only patch cudagraph for non-MoE models as MoE has dynamic control flow
         if model_cfg.get("n_expert", 0) == 0:
             patch_cudagraph_for_compile()
-        model = torch.compile(
-            model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
-        )
+            model = torch.compile(
+                model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
+            )
+        else:
+            # Skip compilation for MoE models
+            pass
         fabric.print(
             f"Model compiled with mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}"
         )
