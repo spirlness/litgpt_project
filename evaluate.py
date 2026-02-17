@@ -1,4 +1,5 @@
 import argparse
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -6,6 +7,9 @@ import torch
 import yaml
 from litgpt import GPT, Config
 from torch.utils.data import DataLoader, Dataset
+
+# Suppress PyTorch warning about non-writable numpy array when using torch.from_numpy
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
 
 
 class TextDataset(Dataset):
@@ -18,8 +22,17 @@ class TextDataset(Dataset):
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
-        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
+        # Optimized implementation: View as int16, wrap with torch.from_numpy (0-copy),
+        # then cast to long (1-copy), and correct sign with bitwise AND.
+        x_view = self.data[idx : idx + self.block_size].view(np.int16)
+        y_view = self.data[idx + 1 : idx + 1 + self.block_size].view(np.int16)
+
+        x = torch.from_numpy(x_view).long()
+        y = torch.from_numpy(y_view).long()
+
+        x.bitwise_and_(0xFFFF)
+        y.bitwise_and_(0xFFFF)
+
         return x, y
 
 
@@ -125,7 +138,7 @@ def evaluate(
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=num_workers > 0,
-        drop_last=False
+        drop_last=False,
     )
 
     losses = []
