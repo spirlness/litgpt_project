@@ -33,7 +33,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
     @patch("run_train.build_optimizer")
     @patch("run_train.Path")
     @patch("run_train.F.cross_entropy")
-    def test_moe_compile_disabled(self, mock_cross_entropy, mock_path, mock_build_opt, mock_data, mock_tok, mock_gpt, mock_compile, mock_fabric, mock_load_yaml):
+    def test_moe_compile_enabled_no_cudagraph(self, mock_cross_entropy, mock_path, mock_build_opt, mock_data, mock_tok, mock_gpt, mock_compile, mock_fabric, mock_load_yaml):
         # Setup mocks
         mock_gpt.return_value.config.moe_aux_loss_weight = 0.0
         mock_gpt.return_value.router_stats = {}
@@ -90,9 +90,10 @@ class TestRunTrainCompileMoE(unittest.TestCase):
             # If unexpected error, let it raise to debug
             raise e
 
-        # Assert compile was NOT called (this is the desired behavior for MoE)
-        # Currently this assertion should FAIL because the fix is not implemented
-        mock_compile.assert_not_called()
+        # Assert compile WAS called (now enabled)
+        mock_compile.assert_called_once()
+        # Assert patch_cudagraph_for_compile was NOT called for MoE
+        sys.modules["src.utils"].patch_cudagraph_for_compile.assert_not_called()
 
     @patch("run_train.load_yaml")
     @patch("run_train.L.Fabric")
@@ -149,6 +150,8 @@ class TestRunTrainCompileMoE(unittest.TestCase):
 
         # Assert compile WAS called (this is standard behavior)
         mock_compile.assert_called_once()
+        # Assert patch_cudagraph_for_compile WAS called for non-MoE
+        sys.modules["src.utils"].patch_cudagraph_for_compile.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
