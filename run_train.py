@@ -15,6 +15,7 @@ os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING", "1")
 os.environ.setdefault("NCCL_DEBUG", "WARN")
 
 import argparse
+import concurrent.futures
 import importlib
 import time
 from pathlib import Path
@@ -33,10 +34,53 @@ from src.utils import (
     apply_runtime_config,
     configure_flash_attention,
     patch_cudagraph_for_compile,
-    patch_flops_measurement,
     patch_gradient_checkpointing,
     verify_flash_attention,
 )
+
+
+_UPLOAD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+
+def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: Path) -> None:
+    # Upload to Hugging Face Hub (Automatic Backup)
+    try:
+        from huggingface_hub import HfApi
+
+        api = HfApi()
+        print(f"Uploading step {step} to {repo_id}...")
+        # Upload folder content
+        api.upload_folder(
+            folder_path=str(checkpoint_dir),
+            repo_id=repo_id,
+            path_in_repo=f"step-{step:08d}",
+            repo_type="model",
+            commit_message=f"Upload checkpoint step {step}",
+        )
+        print(f"Successfully uploaded step {step} to Hugging Face Hub")
+    except Exception as e:
+        print(f"Failed to upload checkpoint to Hugging Face Hub: {e}")
+        print("Continuing training despite upload failure...")
+
+    import shutil
+
+    # Async cleanup: Only delete checkpoints that are superseded by a newer one.
+    # This avoids race conditions where a queued task deletes a newer checkpoint that hasn't been uploaded yet.
+    all_checkpoints = sorted(out_dir.glob("step-*"))
+    if not all_checkpoints:
+        return
+
+    # Checkpoints are sorted by step number (lexically, due to zero-padding)
+    for checkpoint in all_checkpoints:
+        # Delete if it's older than the current one being processed (stale/abandoned).
+        # We only delete checkpoints that are strictly older than the one we just uploaded.
+        # This ensures we don't delete the current checkpoint if a newer one is being created but not yet finished/queued.
+        if checkpoint.name < checkpoint_dir.name:
+            if checkpoint.is_dir():
+                try:
+                    shutil.rmtree(checkpoint)
+                except Exception as e:
+                    print(f"Failed to remove old checkpoint {checkpoint}: {e}")
 
 
 def load_yaml(path: Path) -> dict:
@@ -64,6 +108,37 @@ def find_latest_checkpoint(out_dir: Path) -> Path | None:
     return candidates[-1]
 
 
+_UPLOAD_EXECUTOR = None
+
+
+def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: Path) -> None:
+    # Upload to Hugging Face Hub (Automatic Backup)
+    try:
+        from huggingface_hub import HfApi
+
+        api = HfApi()
+        print(f"Uploading step {step} to {repo_id}...")
+        # Upload folder content
+        api.upload_folder(
+            folder_path=str(checkpoint_dir),
+            repo_id=repo_id,
+            path_in_repo=f"step-{step:08d}",
+            repo_type="model",
+            commit_message=f"Upload checkpoint step {step}",
+        )
+        print(f"Successfully uploaded step {step} to Hugging Face Hub")
+    except Exception as e:
+        print(f"Failed to upload checkpoint to Hugging Face Hub: {e}")
+        print("Continuing training despite upload failure...")
+
+    import shutil
+
+    all_checkpoints = sorted(out_dir.glob("step-*"))
+    for old_checkpoint in all_checkpoints[:-1]:
+        if old_checkpoint.is_dir():
+            shutil.rmtree(old_checkpoint)
+
+
 def save_checkpoint(
     fabric: L.Fabric,
     out_dir: Path,
@@ -87,32 +162,8 @@ def save_checkpoint(
     )
 
     if fabric.is_global_zero:
-        # Upload to Hugging Face Hub (Automatic Backup)
-        try:
-            from huggingface_hub import HfApi
-
-            api = HfApi()
-            repo_id = "lyyh/MOE-200M"
-            print(f"Uploading step {step} to {repo_id}...")
-            # Upload folder content
-            api.upload_folder(
-                folder_path=str(checkpoint_dir),
-                repo_id=repo_id,
-                path_in_repo=f"step-{step:08d}",
-                repo_type="model",
-                commit_message=f"Upload checkpoint step {step}",
-            )
-            print(f"Successfully uploaded step {step} to Hugging Face Hub")
-        except Exception as e:
-            print(f"Failed to upload checkpoint to Hugging Face Hub: {e}")
-            print("Continuing training despite upload failure...")
-
-        import shutil
-
-        all_checkpoints = sorted(out_dir.glob("step-*"))
-        for old_checkpoint in all_checkpoints[:-1]:
-            if old_checkpoint.is_dir():
-                shutil.rmtree(old_checkpoint)
+        repo_id = "lyyh/MOE-200M"
+        _UPLOAD_EXECUTOR.submit(_upload_and_cleanup, checkpoint_dir, repo_id, step, out_dir)
 
 
 def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) -> None:
@@ -211,7 +262,9 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     model, optimizer = fabric.setup(model, optimizer)
 
     if use_compile:
-        patch_cudagraph_for_compile()
+        # Only patch cudagraph for non-MoE models as MoE has dynamic control flow
+        if model_cfg.get("n_expert", 0) == 0:
+            patch_cudagraph_for_compile()
         model = torch.compile(
             model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
         )
