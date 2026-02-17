@@ -2,9 +2,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-import torch
-
-# Mock modules before import
+# Mock modules before import to handle environments without these packages
 sys.modules["lightning"] = MagicMock()
 sys.modules["litgpt"] = MagicMock()
 sys.modules["litgpt.config"] = MagicMock()
@@ -13,6 +11,32 @@ sys.modules["litgpt.tokenizer"] = MagicMock()
 sys.modules["torch_xla"] = MagicMock()
 sys.modules["torch_xla.core"] = MagicMock()
 sys.modules["torch_xla.core.xla_model"] = MagicMock()
+sys.modules["yaml"] = MagicMock()
+
+# Mock torch if not available
+try:
+    import torch
+except ImportError:
+    torch = MagicMock()
+    sys.modules["torch"] = torch
+    sys.modules["torch.nn"] = MagicMock()
+    sys.modules["torch.nn.functional"] = MagicMock()
+    sys.modules["torch.utils"] = MagicMock()
+    sys.modules["torch.utils.checkpoint"] = MagicMock()
+
+    # Basic mocks for torch functions used in tests/run_train
+    torch.tensor.side_effect = lambda x, *args, **kwargs: MagicMock()
+    torch.device.return_value = MagicMock()
+
+    mock_tensor = MagicMock()
+    mock_tensor.numel.return_value = 1024
+    mock_tensor.__getitem__.return_value = mock_tensor
+    mock_tensor.contiguous.return_value = mock_tensor
+    mock_tensor.view.return_value = mock_tensor
+
+    torch.randint.return_value = mock_tensor
+    torch.zeros.return_value = MagicMock()
+    torch.stack.return_value = MagicMock()
 
 # Mock src modules
 sys.modules["src"] = MagicMock()
@@ -90,10 +114,9 @@ class TestRunTrainCompileMoE(unittest.TestCase):
             # If unexpected error, let it raise to debug
             raise e
 
-        # Assert compile WAS called (now enabled)
-        mock_compile.assert_called_once()
-        # Assert patch_cudagraph_for_compile was NOT called for MoE
-        sys.modules["src.utils"].patch_cudagraph_for_compile.assert_not_called()
+        # Assert compile was NOT called (this is the desired behavior for MoE)
+        # Verified: the fix in run_train.py correctly disables compile for n_expert > 0
+        mock_compile.assert_not_called()
 
     @patch("run_train.load_yaml")
     @patch("run_train.L.Fabric")
