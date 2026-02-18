@@ -1,56 +1,96 @@
+import importlib
+import os
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-# Mock modules before import to handle environments without these packages
-sys.modules["lightning"] = MagicMock()
-sys.modules["litgpt"] = MagicMock()
-sys.modules["litgpt.config"] = MagicMock()
-sys.modules["litgpt.model"] = MagicMock()
-sys.modules["litgpt.tokenizer"] = MagicMock()
-sys.modules["torch_xla"] = MagicMock()
-sys.modules["torch_xla.core"] = MagicMock()
-sys.modules["torch_xla.core.xla_model"] = MagicMock()
-sys.modules["yaml"] = MagicMock()
-
-# Mock torch if not available
-try:
-    import torch
-except ImportError:
-    torch = MagicMock()
-    torch.__path__ = []  # Make it a package
-    sys.modules["torch"] = torch
-    sys.modules["torch.nn"] = MagicMock()
-    sys.modules["torch.nn.functional"] = MagicMock()
-    sys.modules["torch.utils"] = MagicMock()
-    sys.modules["torch.utils.checkpoint"] = MagicMock()
-
-    # Basic mocks for torch functions used in tests/run_train
-    torch.tensor.side_effect = lambda x, *args, **kwargs: MagicMock()
-    torch.device.return_value = MagicMock()
-
-    mock_tensor = MagicMock()
-    mock_tensor.numel.return_value = 1024
-    mock_tensor.__getitem__.return_value = mock_tensor
-    mock_tensor.contiguous.return_value = mock_tensor
-    mock_tensor.view.return_value = mock_tensor
-
-    torch.randint.return_value = mock_tensor
-    torch.zeros.return_value = MagicMock()
-    torch.stack.return_value = MagicMock()
-
-# Mock src modules
-sys.modules["src"] = MagicMock()
-sys.modules["src.litgpt_moe"] = MagicMock()
-sys.modules["src.litgpt_moe.config"] = MagicMock()
-sys.modules["src.litgpt_moe.fixed_text_files"] = MagicMock()
-sys.modules["src.litgpt_moe.utils"] = MagicMock()
-
-# Now import run_train
-import run_train  # noqa: E402
-
 
 class TestRunTrainCompileMoE(unittest.TestCase):
+    def setUp(self):
+        # Setup mocks dictionary
+        self.mock_modules = {
+            "lightning": MagicMock(),
+            "litgpt": MagicMock(),
+            "litgpt.config": MagicMock(),
+            "litgpt.model": MagicMock(),
+            "litgpt.tokenizer": MagicMock(),
+            "torch_xla": MagicMock(),
+            "torch_xla.core": MagicMock(),
+            "torch_xla.core.xla_model": MagicMock(),
+            "yaml": MagicMock(),
+            "src": MagicMock(),
+            "src.litgpt_moe": MagicMock(),
+            "src.litgpt_moe.config": MagicMock(),
+            "src.litgpt_moe.fixed_text_files": MagicMock(),
+            "src.litgpt_moe.utils": MagicMock(),
+        }
+
+        # We mock torch consistently to ensure test stability and fix type errors
+        mock_torch = MagicMock()
+        mock_torch.__path__ = []
+        mock_torch.__spec__ = None
+
+        # Fix TypeError: isinstance() arg 2 must be a type
+        # We make torch.Tensor a class so isinstance(x, torch.Tensor) works if x is a MockTensor
+        # And ensure numel returns int so arithmetic keeps types as int
+        class MockTensor(MagicMock):
+            def numel(self):
+                return 1024
+            def __getitem__(self, idx):
+                return self
+            def contiguous(self):
+                return self
+            def view(self, *args):
+                return self
+            def detach(self):
+                return self
+            def to(self, *args, **kwargs):
+                return self
+
+            # Allow comparison with int just in case
+            def __ge__(self, other):
+                return True
+            def __gt__(self, other):
+                return True
+            def __le__(self, other):
+                return True
+            def __lt__(self, other):
+                return True
+
+        mock_torch.Tensor = MockTensor
+
+        # Functions returning tensors
+        mock_torch.randint.return_value = MockTensor()
+        mock_torch.zeros.return_value = MockTensor()
+        mock_torch.stack.return_value = MockTensor()
+
+        self.mock_modules["torch"] = mock_torch
+        self.mock_modules["torch.nn"] = MagicMock()
+        self.mock_modules["torch.nn.functional"] = MagicMock()
+        self.mock_modules["torch.utils"] = MagicMock()
+        self.mock_modules["torch.utils.checkpoint"] = MagicMock()
+
+        # Start patcher
+        self.patcher = patch.dict(sys.modules, self.mock_modules)
+        self.patcher.start()
+
+        # Import run_train safely
+        if os.getcwd() not in sys.path:
+            sys.path.append(os.getcwd())
+
+        try:
+            import run_train
+            importlib.reload(run_train)
+        except ImportError:
+            pass
+
+        self.run_train = run_train
+
+    def tearDown(self):
+        self.patcher.stop()
+        if "run_train" in sys.modules:
+            del sys.modules["run_train"]
+
     @patch("run_train.load_yaml")
     @patch("run_train.L.Fabric")
     @patch("run_train.torch.compile")
@@ -74,7 +114,9 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         # Mock optimizer param groups
         mock_build_opt.return_value.param_groups = [{"lr": 0.001}]
 
-        mock_cross_entropy.return_value = torch.tensor(0.0)
+        # mock_cross_entropy return value should be a tensor (MockTensor)
+        mock_cross_entropy.return_value = self.mock_modules["torch"].Tensor()
+
         mock_path.return_value.exists.return_value = True
 
         # First call for model_config, second for train_config
@@ -87,14 +129,14 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         fabric_instance = mock_fabric.return_value
         fabric_instance.global_rank = 0
         fabric_instance.world_size = 1
-        fabric_instance.device = torch.device("cpu")
+        fabric_instance.device = MagicMock() # torch.device mock
         fabric_instance.setup.side_effect = lambda m, o: (m, o)
         fabric_instance.setup_dataloaders.return_value = MagicMock() # dataloader
 
         # Mock data loader iterator
         mock_dataloader = fabric_instance.setup_dataloaders.return_value
         # Mock batch: [input_ids, targets]
-        mock_batch = torch.randint(0, 100, (1, 1025))
+        mock_batch = self.mock_modules["torch"].randint(0, 100, (1, 1025))
         mock_dataloader.__iter__.return_value = iter([mock_batch])
 
         # Mock args
@@ -110,7 +152,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
 
         # Run train
         try:
-            run_train.train(args.model_config, args.train_config, args)
+            self.run_train.train(args.model_config, args.train_config, args)
         except StopIteration:
             pass # Iterator exhausted
         except Exception as e:
@@ -118,7 +160,6 @@ class TestRunTrainCompileMoE(unittest.TestCase):
             raise e
 
         # Assert compile was NOT called (this is the desired behavior for MoE)
-        # Verified: the fix in run_train.py correctly disables compile for n_expert > 0
         mock_compile.assert_not_called()
 
     @patch("run_train.load_yaml")
@@ -141,7 +182,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         mock_fabric.return_value.all_reduce.return_value.item.return_value = 0.0
         mock_build_opt.return_value.param_groups = [{"lr": 0.001}]
 
-        mock_cross_entropy.return_value = torch.tensor(0.0)
+        mock_cross_entropy.return_value = self.mock_modules["torch"].Tensor()
         mock_path.return_value.exists.return_value = True
 
         mock_load_yaml.side_effect = [
@@ -152,11 +193,11 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         fabric_instance = mock_fabric.return_value
         fabric_instance.global_rank = 0
         fabric_instance.world_size = 1
-        fabric_instance.device = torch.device("cpu")
+        fabric_instance.device = MagicMock()
         fabric_instance.setup.side_effect = lambda m, o: (m, o)
         fabric_instance.setup_dataloaders.return_value = MagicMock()
         mock_dataloader = fabric_instance.setup_dataloaders.return_value
-        mock_batch = torch.randint(0, 100, (1, 1025))
+        mock_batch = self.mock_modules["torch"].randint(0, 100, (1, 1025))
         mock_dataloader.__iter__.return_value = iter([mock_batch])
 
         args = MagicMock()
@@ -170,14 +211,12 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         args.flash_attention_force = None
 
         try:
-            run_train.train(args.model_config, args.train_config, args)
+            self.run_train.train(args.model_config, args.train_config, args)
         except StopIteration:
             pass
 
         # Assert compile WAS called (this is standard behavior)
         mock_compile.assert_called_once()
-        # Assert patch_cudagraph_for_compile WAS called for non-MoE
-        # sys.modules["src.utils"].patch_cudagraph_for_compile.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

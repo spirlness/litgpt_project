@@ -1,4 +1,5 @@
 
+import importlib
 import os
 import shutil
 import sys
@@ -6,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import importlib
+
 
 class TestFixedTextFilesOptimization(unittest.TestCase):
     def setUp(self):
@@ -38,6 +39,8 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         # Make torch mock package-like
         self.mock_modules["torch"].__path__ = []
         self.mock_modules["torch"].__spec__ = None
+        self.mock_modules["torch.nn"] = MagicMock()
+        self.mock_modules["torch.nn.functional"] = MagicMock()
 
         # Mock DataModule
         class MockDataModule:
