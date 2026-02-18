@@ -1,14 +1,15 @@
 import sys
 from pathlib import Path
+
 import numpy as np
 import torch
-import pytest
 
 # Add project root to sys.path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from evaluate import TextDataset
+from evaluate import TextDataset  # noqa: E402
+
 
 def test_text_dataset_loading(tmp_path):
     # Create dummy data with values covering full uint16 range
