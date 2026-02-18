@@ -10,11 +10,11 @@ from unittest.mock import patch
 import requests
 import torch
 import yaml
-from litgpt.args import LogArgs, TrainArgs
-from litgpt.config import Config
 
 # from litgpt.data import TextFiles
 from fixed_text_files import FixedTextFiles as TextFiles
+from litgpt.args import LogArgs, TrainArgs
+from litgpt.config import Config
 from src.utils import (
     apply_runtime_config,
     configure_flash_attention,

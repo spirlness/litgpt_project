@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import Optional, Union, Literal
+
 from litgpt.config import Config as LitGPTConfig
+
 
 @dataclass
 class MoEConfig(LitGPTConfig):

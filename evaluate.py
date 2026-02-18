@@ -4,10 +4,9 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
-from litgpt.config import Config
 from litgpt.model import GPT
-from litgpt.tokenizer import Tokenizer
 from torch.utils.data import DataLoader, Dataset
+
 from src.litgpt_moe.config import MoEConfig
 
 

@@ -18,6 +18,7 @@ try:
     import torch
 except ImportError:
     torch = MagicMock()
+    torch.__path__ = []  # Make it a package
     sys.modules["torch"] = torch
     sys.modules["torch.nn"] = MagicMock()
     sys.modules["torch.nn.functional"] = MagicMock()

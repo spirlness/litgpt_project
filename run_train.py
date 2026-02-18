@@ -25,7 +25,6 @@ import lightning as L
 import torch
 import torch.nn.functional as F
 import yaml
-from litgpt.config import Config
 from litgpt.model import GPT
 from litgpt.tokenizer import Tokenizer
 
