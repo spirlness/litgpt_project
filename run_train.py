@@ -42,6 +42,10 @@ _UPLOAD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
 def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: Path) -> None:
+    """
+    Background task to upload checkpoint to Hugging Face Hub and clean up old local checkpoints.
+    Running this in a separate thread avoids blocking the main training loop.
+    """
     # Upload to Hugging Face Hub (Automatic Backup)
     try:
         from huggingface_hub import HfApi
