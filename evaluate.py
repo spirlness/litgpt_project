@@ -1,4 +1,5 @@
 import argparse
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,9 @@ from litgpt.model import GPT
 from torch.utils.data import DataLoader, Dataset
 
 from src.litgpt_moe.config import MoEConfig
+
+# Suppress warning for read-only memmap -> torch tensor
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
 
 
 class TextDataset(Dataset):
@@ -20,8 +24,11 @@ class TextDataset(Dataset):
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
-        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
+        # Optimized zero-copy implementation: view as int16, cast to long, mask for unsigned
+        chunk = torch.from_numpy(self.data[idx : idx + self.block_size + 1].view(np.int16)).long()
+        chunk.bitwise_and_(0xffff)
+        x = chunk[:-1]
+        y = chunk[1:]
         return x, y
 
 
