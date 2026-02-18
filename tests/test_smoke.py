@@ -79,9 +79,9 @@ def test_env_sanity_check_local() -> None:
     env = os.environ.copy()
     env.pop("SKIP_BNB_RUNTIME", None)
 
-    sanity_script = Path("tools/verify_flash.py")
+    sanity_script = Path("scripts/verify_flash.py")
     if not sanity_script.exists():
-        pytest.skip("tools/verify_flash.py not found")
+        pytest.skip("scripts/verify_flash.py not found")
 
     try:
         # Try running with uv first (assuming uv is in PATH)

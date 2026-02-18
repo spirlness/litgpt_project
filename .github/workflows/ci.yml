@@ -49,4 +49,4 @@ jobs:
         run: uv run pytest -v
 
       - name: Env sanity check (GPU-free)
-        run: uv run python tools/env_sanity_check.py
+      run: uv run python scripts/env_sanity_check.py
