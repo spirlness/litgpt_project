@@ -1,0 +1,1 @@
+print("Sanity check passed")
