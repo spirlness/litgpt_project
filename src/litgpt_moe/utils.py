@@ -207,7 +207,6 @@ def apply_gradient_checkpointing(model: torch.nn.Module) -> None:
         print("Warning: Could not find transformer blocks to apply gradient checkpointing.")
         return
 
-    from functools import partial
     
     # We need to wrap the forward method of each block instance
     for block in blocks:

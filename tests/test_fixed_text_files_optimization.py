@@ -1,41 +1,13 @@
 
-import sys
-import unittest
-import shutil
-import tempfile
+import importlib
 import os
+import shutil
+import sys
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-# Mock all dependencies
-sys.modules["torch"] = MagicMock()
-sys.modules["torch.utils"] = MagicMock()
-sys.modules["torch.utils.data"] = MagicMock()
-sys.modules["litdata"] = MagicMock()
-sys.modules["litdata.streaming"] = MagicMock()
-sys.modules["litgpt"] = MagicMock()
-sys.modules["litgpt.data"] = MagicMock()
-sys.modules["litgpt.tokenizer"] = MagicMock()
-
-# Mock the DataModule class so FixedTextFiles can inherit from it
-class MockDataModule:
-    def __init__(self):
-        pass
-    def prepare_data(self):
-        pass
-    def setup(self, stage=None):
-        pass
-    def connect(self, **kwargs):
-        pass
-
-# Setup mocks
-sys.modules["litgpt.data"].DataModule = MockDataModule
-sys.modules["torch.utils.data"].DataLoader = MagicMock()
-
-# Now import the module under test
-# We need to make sure src is importable
-sys.path.append(os.getcwd())
-from src.litgpt_moe.fixed_text_files import FixedTextFiles, collate_fixed_length
 
 class TestFixedTextFilesOptimization(unittest.TestCase):
     def setUp(self):
@@ -52,27 +24,73 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         (self.train_dir / "subdir").mkdir()
         (self.train_dir / "subdir" / "d.txt").touch()
 
+        # Setup Mocks for sys.modules
+        self.mock_modules = {
+            "torch": MagicMock(),
+            "torch.utils": MagicMock(),
+            "torch.utils.data": MagicMock(),
+            "litdata": MagicMock(),
+            "litdata.streaming": MagicMock(),
+            "litgpt": MagicMock(),
+            "litgpt.data": MagicMock(),
+            "litgpt.tokenizer": MagicMock(),
+        }
+
+        # Make torch mock package-like
+        self.mock_modules["torch"].__path__ = []
+        self.mock_modules["torch"].__spec__ = None
+        self.mock_modules["torch.nn"] = MagicMock()
+        self.mock_modules["torch.nn.functional"] = MagicMock()
+
+        # Mock DataModule
+        class MockDataModule:
+            def __init__(self): pass
+            def prepare_data(self): pass
+            def setup(self, stage=None): pass
+            def connect(self, **kwargs): pass
+
+        self.mock_modules["litgpt.data"].DataModule = MockDataModule
+        self.mock_modules["torch.utils.data"].DataLoader = MagicMock()
+
+        # Start sys.modules patcher
+        self.patcher = patch.dict(sys.modules, self.mock_modules)
+        self.patcher.start()
+
+        # Import the module under test with patched dependencies
+        if os.getcwd() not in sys.path:
+            sys.path.append(os.getcwd())
+
+        # We need to force reload/import to pick up patched modules
+        # If it was already imported, reload it. If not, import it.
+        try:
+            import src.litgpt_moe.fixed_text_files
+            importlib.reload(src.litgpt_moe.fixed_text_files)
+        except ImportError:
+            # Should not happen if path is correct
+            pass
+
+        from src.litgpt_moe.fixed_text_files import FixedTextFiles
+        self.FixedTextFiles = FixedTextFiles
+
     def tearDown(self):
+        # Stop patcher to restore original modules
+        self.patcher.stop()
         shutil.rmtree(self.temp_dir)
+
+        # Un-import the module under test so it doesn't pollute subsequent tests
+        # with references to mocks
+        if "src.litgpt_moe.fixed_text_files" in sys.modules:
+            del sys.modules["src.litgpt_moe.fixed_text_files"]
 
     def test_prepare_data_files_enumeration(self):
         # Setup the module
-        module = FixedTextFiles(train_data_path=self.train_dir, num_workers=4)
+        module = self.FixedTextFiles(train_data_path=self.train_dir, num_workers=4)
         module.tokenizer = MagicMock() # Mock tokenizer
 
         # Mock validate_tokenizer in the module namespace or patch
-        with patch("src.fixed_text_files.validate_tokenizer") as mock_validate:
+        with patch("src.litgpt_moe.fixed_text_files.validate_tokenizer"):
             # Mock litdata.optimize
             with patch("litdata.optimize") as mock_optimize:
-                # Need to mock os.path.isdir for output paths to force processing
-                # But module.out_path_train check uses Path(...).is_dir()
-                # So we can just rely on non-existence (since we created empty temp dir)
-                # But wait, module creates out_path_train = train_data_path / "train"
-                # If train_data_path / "train" doesn't exist, it proceeds.
-                # In setUp we made train_dir.
-                # out_path_train will be train_dir / "train".
-                # We haven't created "train" subdir, so it doesn't exist. Good.
-
                 module.prepare_data()
 
                 # Verify optimize was called
@@ -83,12 +101,6 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
                 self.assertEqual(len(calls), 2)
 
                 # First call is for train split
-                # train_files was sorted(["a.txt", "b.txt", "c.txt"])
-                # val_files, *train_files = train_files
-                # val_files -> a.txt
-                # train_files -> b.txt, c.txt
-
-                # First optimize call is for train
                 args1, kwargs1 = calls[0]
                 inputs1 = kwargs1["inputs"]
                 expected_train = sorted([str(self.train_dir / f) for f in ["b.txt", "c.txt"]])
@@ -109,10 +121,10 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         val_dir.mkdir()
         (val_dir / "val.txt").touch()
 
-        module = FixedTextFiles(train_data_path=self.train_dir, val_data_path=val_dir, num_workers=2)
+        module = self.FixedTextFiles(train_data_path=self.train_dir, val_data_path=val_dir, num_workers=2)
         module.tokenizer = MagicMock()
 
-        with patch("src.fixed_text_files.validate_tokenizer") as mock_validate:
+        with patch("src.litgpt_moe.fixed_text_files.validate_tokenizer"):
             with patch("litdata.optimize") as mock_optimize:
                 module.prepare_data()
 
