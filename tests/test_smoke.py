@@ -15,8 +15,6 @@ CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
 
 def test_configs_parse() -> None:
     paths = [
-        Path("model_config.yaml"),
-        Path("train_config.yaml"),
         Path("configs/moe_30m_debug.yaml"),
         Path("configs/moe_200m.yaml"),
         Path("configs/moe_400m.yaml"),
@@ -34,8 +32,8 @@ def test_compileall_project_sources() -> None:
         "prepare_data.py",
         "generate.py",
         "evaluate.py",
-        "src/utils.py",
-        "tools",
+        "src/litgpt_moe/utils.py",
+        "scripts",
     ]
     cmd = [sys.executable, "-m", "compileall", "-q", "-f", *targets]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -56,7 +54,7 @@ def test_import_entrypoints() -> None:
     import generate
     import prepare_data
     import run_train
-    from src import utils
+    from src.litgpt_moe import utils
 
     assert evaluate
     assert generate
