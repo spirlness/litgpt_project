@@ -4,8 +4,12 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
+import warnings
 from litgpt.model import GPT
 from torch.utils.data import DataLoader, Dataset
+
+# Suppress warning for zero-copy loading from read-only memmap
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
 
 from src.litgpt_moe.config import MoEConfig
 
@@ -20,8 +24,18 @@ class TextDataset(Dataset):
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
-        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
+        # Optimized for zero-copy:
+        # 1. View uint16 memmap as int16 (no copy)
+        # 2. Create tensor from numpy view (no copy)
+        # 3. Cast to long (copy) and apply mask to correct negative values from int16 interpretation
+        data_slice = self.data[idx : idx + self.block_size + 1]
+        data_view = data_slice.view(np.int16)
+        t = torch.from_numpy(data_view)
+        t = t.to(torch.long)
+        t = t.bitwise_and_(0xffff)
+
+        x = t[:-1]
+        y = t[1:]
         return x, y
 
 
