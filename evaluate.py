@@ -1,17 +1,17 @@
 import argparse
+import warnings
 from pathlib import Path
 
 import numpy as np
 import torch
 import yaml
-import warnings
 from litgpt.model import GPT
 from torch.utils.data import DataLoader, Dataset
 
+from src.litgpt_moe.config import MoEConfig
+
 # Suppress warning for zero-copy loading from read-only memmap
 warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
-
-from src.litgpt_moe.config import MoEConfig
 
 
 class TextDataset(Dataset):

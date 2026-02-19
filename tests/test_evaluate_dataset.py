@@ -1,11 +1,13 @@
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
+
 import numpy as np
 import torch
-from pathlib import Path
-import tempfile
-import shutil
-import warnings
+
 from evaluate import TextDataset
+
 
 class TestEvaluateDataset(unittest.TestCase):
     def setUp(self):
