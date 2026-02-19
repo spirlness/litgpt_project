@@ -159,8 +159,11 @@ class TestRunTrainCompileMoE(unittest.TestCase):
             # If unexpected error, let it raise to debug
             raise e
 
-        # Assert compile was NOT called (this is the desired behavior for MoE)
-        mock_compile.assert_not_called()
+        # Assert compile WAS called (updated behavior)
+        mock_compile.assert_called_once()
+
+        # Verify warning was printed
+        fabric_instance.print.assert_any_call("Warning: torch.compile for MoE models might be unstable in some environments.")
 
     @patch("run_train.load_yaml")
     @patch("run_train.L.Fabric")
