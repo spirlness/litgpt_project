@@ -32,6 +32,10 @@ eval:
 
 resume: auto
 
+checkpointing:
+  upload_to_hf: false
+  # hf_repo_id: your-username/your-model-repo
+
 # Performance optimization options
 optimization:
   # torch.compile settings

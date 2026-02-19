@@ -1,0 +1,17 @@
+name: Dense-Compile-Flash-Smoke
+bias: false
+block_size: 256
+mlp_class_name: LLaMAMLP
+intermediate_size: 512
+n_embd: 128
+n_expert: 0
+n_expert_per_token: 0
+n_head: 4
+n_layer: 2
+n_query_groups: 4
+norm_class_name: RMSNorm
+norm_eps: 1e-5
+padded_vocab_size: 50257
+parallel_residual: false
+rope_base: 10000
+vocab_size: 50257

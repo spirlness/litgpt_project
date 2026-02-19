@@ -146,11 +146,6 @@ def apply_runtime_config() -> None:
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", os.environ["PYTORCH_ALLOC_CONF"])
     torch.set_float32_matmul_precision("high")
 
-    if torch.cuda.is_available():
-        torch.backends.cuda.enable_flash_sdp(True)
-        torch.backends.cuda.enable_mem_efficient_sdp(True)
-        torch.backends.cuda.enable_math_sdp(True)
-
 
 def validate(fabric, model, val_dataloader, max_iters, verbose=True):
     """

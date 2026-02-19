@@ -38,7 +38,21 @@ from src.litgpt_moe.utils import (
 )
 
 
-_UPLOAD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+_UPLOAD_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_upload_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _UPLOAD_EXECUTOR
+    if _UPLOAD_EXECUTOR is None:
+        _UPLOAD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    return _UPLOAD_EXECUTOR
+
+
+def _shutdown_upload_executor() -> None:
+    global _UPLOAD_EXECUTOR
+    if _UPLOAD_EXECUTOR is not None:
+        _UPLOAD_EXECUTOR.shutdown(wait=False)
+        _UPLOAD_EXECUTOR = None
 
 
 def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: Path) -> None:
@@ -104,37 +118,6 @@ def find_latest_checkpoint(out_dir: Path) -> Path | None:
     return candidates[-1]
 
 
-_UPLOAD_EXECUTOR = None
-
-
-def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: Path) -> None:
-    # Upload to Hugging Face Hub (Automatic Backup)
-    try:
-        from huggingface_hub import HfApi
-
-        api = HfApi()
-        print(f"Uploading step {step} to {repo_id}...")
-        # Upload folder content
-        api.upload_folder(
-            folder_path=str(checkpoint_dir),
-            repo_id=repo_id,
-            path_in_repo=f"step-{step:08d}",
-            repo_type="model",
-            commit_message=f"Upload checkpoint step {step}",
-        )
-        print(f"Successfully uploaded step {step} to Hugging Face Hub")
-    except Exception as e:
-        print(f"Failed to upload checkpoint to Hugging Face Hub: {e}")
-        print("Continuing training despite upload failure...")
-
-    import shutil
-
-    all_checkpoints = sorted(out_dir.glob("step-*"))
-    for old_checkpoint in all_checkpoints[:-1]:
-        if old_checkpoint.is_dir():
-            shutil.rmtree(old_checkpoint)
-
-
 def save_checkpoint(
     fabric: L.Fabric,
     out_dir: Path,
@@ -142,6 +125,9 @@ def save_checkpoint(
     total_tokens: int,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    *,
+    upload_to_hf: bool = False,
+    hf_repo_id: str | None = None,
 ):
     checkpoint_dir = out_dir / f"step-{step:08d}"
     if fabric.is_global_zero:
@@ -157,10 +143,11 @@ def save_checkpoint(
         },
     )
 
-    if fabric.is_global_zero:
-        repo_id = "lyyh/MOE-200M"
-        if _UPLOAD_EXECUTOR:
-            _UPLOAD_EXECUTOR.submit(_upload_and_cleanup, checkpoint_dir, repo_id, step, out_dir)
+    if fabric.is_global_zero and upload_to_hf:
+        if not hf_repo_id:
+            fabric.print("Skipping HF upload: `upload_to_hf` is enabled but no `hf_repo_id` is configured.")
+        else:
+            _get_upload_executor().submit(_upload_and_cleanup, checkpoint_dir, hf_repo_id, step, out_dir)
 
 
 def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) -> None:
@@ -210,17 +197,25 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     )
     disable_math_fallback = opt_cfg.get("disable_math_fallback", False)
 
-    configure_flash_attention(enable=True, disable_math_fallback=disable_math_fallback)
-    if use_flash_attention or flash_attention_force:
-        verify_flash_attention(force=flash_attention_force, verbose=True)
+    flash_attention_enabled = bool(use_flash_attention or flash_attention_force)
+    effective_disable_math_fallback = bool(disable_math_fallback and flash_attention_enabled)
 
     apply_runtime_config()
+    configure_flash_attention(
+        enable=flash_attention_enabled,
+        disable_math_fallback=effective_disable_math_fallback,
+    )
+    if use_flash_attention or flash_attention_force:
+        verify_flash_attention(force=flash_attention_force, verbose=True)
     # patch_flops_measurement() # Not imported and seemingly undefined
 
     train_section = train_cfg.get("train", {})
+    checkpointing_cfg = train_cfg.get("checkpointing", {})
     data_section = train_cfg.get("data", {})
     optimizer_section = train_cfg.get("optimizer", {})
     grad_checkpointing = bool(train_section.get("gradient_checkpointing", False))
+    upload_to_hf = bool(checkpointing_cfg.get("upload_to_hf", False))
+    hf_repo_id = checkpointing_cfg.get("hf_repo_id") or os.environ.get("HF_REPO_ID")
 
     fabric = L.Fabric(
         strategy=train_cfg.get("strategy", "ddp"),
@@ -422,12 +417,31 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
             last_log_tokens = total_tokens
 
         if save_interval > 0 and global_step % save_interval == 0:
-            save_checkpoint(fabric, out_dir, global_step, total_tokens, model, optimizer)
+            save_checkpoint(
+                fabric,
+                out_dir,
+                global_step,
+                total_tokens,
+                model,
+                optimizer,
+                upload_to_hf=upload_to_hf,
+                hf_repo_id=hf_repo_id,
+            )
 
         if max_tokens > 0 and total_tokens >= max_tokens:
             break
 
-    save_checkpoint(fabric, out_dir, global_step, total_tokens, model, optimizer)
+    save_checkpoint(
+        fabric,
+        out_dir,
+        global_step,
+        total_tokens,
+        model,
+        optimizer,
+        upload_to_hf=upload_to_hf,
+        hf_repo_id=hf_repo_id,
+    )
+    _shutdown_upload_executor()
     if fabric.device.type == "cuda":
         allocated_gib = torch.cuda.max_memory_allocated() / (1024**3)
         reserved_gib = torch.cuda.max_memory_reserved() / (1024**3)
@@ -438,7 +452,7 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LitGPT Fabric training")
-    parser.add_argument("--model-config", type=Path, default=Path("model_config.yaml"))
+    parser.add_argument("--model-config", type=Path, default=Path("configs/moe_200m.yaml"))
     parser.add_argument("--train-config", type=Path, default=Path("configs/kaggle_t4_ddp.yaml"))
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument(
