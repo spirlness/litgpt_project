@@ -58,16 +58,20 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         self.patcher.start()
 
         # Import the module under test with patched dependencies
-        # Use importlib.import_module to be safe against package structure
+        module_name = "src.litgpt_moe.fixed_text_files"
         try:
-            # First try to import normally
-            import src.litgpt_moe.fixed_text_files
-            self.fixed_text_files_module = src.litgpt_moe.fixed_text_files
-            importlib.reload(self.fixed_text_files_module)
-        except (ImportError, AttributeError):
-             # Fallback: import by name
-            self.fixed_text_files_module = importlib.import_module("src.litgpt_moe.fixed_text_files")
-            importlib.reload(self.fixed_text_files_module)
+            # If already imported (e.g. by other tests or pytest collection), reload it
+            if module_name in sys.modules:
+                self.fixed_text_files_module = sys.modules[module_name]
+                importlib.reload(self.fixed_text_files_module)
+            else:
+                self.fixed_text_files_module = importlib.import_module(module_name)
+        except (ImportError, KeyError, AttributeError):
+            # Fallback: force re-import if reload failed or module was somehow invalid
+            # This handles cases where the module object in sys.modules is stale or weird
+            if module_name in sys.modules:
+                del sys.modules[module_name]
+            self.fixed_text_files_module = importlib.import_module(module_name)
 
         self.FixedTextFiles = self.fixed_text_files_module.FixedTextFiles
 
