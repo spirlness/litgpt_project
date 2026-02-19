@@ -28,7 +28,12 @@ train:
   max_seq_length: 512
 
 optimizer:
-  class_path: torch.optim.AdamW
+  class_path: muon.MuonWithAuxAdam
   init_args:
-    lr: 0.0003
-    weight_decay: 0.01
+    muon_lr: 0.01
+    muon_momentum: 0.95
+    muon_weight_decay: 0.01
+    adam_lr: 0.0003
+    adam_betas: [0.9, 0.95]
+    adam_eps: 1.0e-8
+    adam_weight_decay: 0.01

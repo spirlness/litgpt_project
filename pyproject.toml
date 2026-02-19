@@ -20,6 +20,7 @@ dependencies = [
     "sentencepiece",
     "bitsandbytes",
     "litdata>=0.2.59",
+    "muon-optimizer>=0.1.0",
 ]
 
 [build-system]

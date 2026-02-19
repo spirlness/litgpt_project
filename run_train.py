@@ -107,6 +107,54 @@ def resolve_class(path: str):
 def build_optimizer(model: torch.nn.Module, optimizer_cfg: dict) -> torch.optim.Optimizer:
     class_path = optimizer_cfg.get("class_path", "torch.optim.AdamW")
     init_args = optimizer_cfg.get("init_args", {})
+
+    # Muon requires dedicated parameter grouping:
+    # - matrix-like hidden weights -> Muon
+    # - embeddings / lm_head / 1D params -> Adam
+    if class_path == "muon.MuonWithAuxAdam":
+        from muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
+
+        muon_params = []
+        adam_params = []
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if param.ndim >= 2 and "embed" not in name and "lm_head" not in name:
+                muon_params.append(param)
+            else:
+                adam_params.append(param)
+
+        param_groups = []
+        if muon_params:
+            param_groups.append(
+                {
+                    "params": muon_params,
+                    "use_muon": True,
+                    "lr": float(init_args.get("muon_lr", 0.01)),
+                    "momentum": float(init_args.get("muon_momentum", 0.95)),
+                    "weight_decay": float(init_args.get("muon_weight_decay", 0.01)),
+                }
+            )
+        if adam_params:
+            betas = init_args.get("adam_betas", (0.9, 0.95))
+            param_groups.append(
+                {
+                    "params": adam_params,
+                    "use_muon": False,
+                    "lr": float(init_args.get("adam_lr", 3e-4)),
+                    "betas": tuple(betas),
+                    "eps": float(init_args.get("adam_eps", 1e-8)),
+                    "weight_decay": float(init_args.get("adam_weight_decay", 0.01)),
+                }
+            )
+
+        if not param_groups:
+            raise ValueError("No trainable parameters found for Muon optimizer.")
+
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            return MuonWithAuxAdam(param_groups)
+        return SingleDeviceMuonWithAuxAdam(param_groups)
+
     optimizer_cls = resolve_class(class_path)
     return optimizer_cls(model.parameters(), **init_args)
 

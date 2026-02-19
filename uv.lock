@@ -745,6 +745,7 @@ dependencies = [
     { name = "lightning" },
     { name = "litdata" },
     { name = "litgpt" },
+    { name = "muon-optimizer" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "safetensors" },
@@ -772,6 +773,7 @@ requires-dist = [
     { name = "lightning" },
     { name = "litdata", specifier = ">=0.2.59" },
     { name = "litgpt" },
+    { name = "muon-optimizer", specifier = ">=0.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<10" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0,<6" },
     { name = "pyyaml" },
@@ -973,6 +975,15 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/0a/7d/a988f258104dcd2ccf1ed40fdc97e26c4ac351eeaf81d76e266c52d84e2f/multiprocess-0.70.16-py312-none-any.whl", hash = "sha256:fc0544c531920dde3b00c29863377f87e1632601092ea2daca74e4beb40faa2e" },
     { url = "https://mirrors.aliyun.com/pypi/packages/ea/89/38df130f2c799090c978b366cfdf5b96d08de5b29a4a293df7f7429fa50b/multiprocess-0.70.16-py38-none-any.whl", hash = "sha256:a71d82033454891091a226dfc319d0cfa8019a4e888ef9ca910372a446de4435" },
     { url = "https://mirrors.aliyun.com/pypi/packages/da/d9/f7f9379981e39b8c2511c9e0326d212accacb82f12fbfdc1aa2ce2a7b2b6/multiprocess-0.70.16-py39-none-any.whl", hash = "sha256:a0bafd3ae1b732eac64be2e72038231c1ba97724b60b09400d68f229fcc2fbf3" },
+]
+
+[[package]]
+name = "muon-optimizer"
+version = "0.1.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/02/8e/753080860c9c0f5333bfe20ebb194f293af77274cfaf3f2bd999511ecf6e/muon_optimizer-0.1.0.tar.gz", hash = "sha256:65c50441f29b7248e586383d371262eb9062653e820b11143c81a7a10ba48da7" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/e8/e7/ae0b654bb12f7dfeb688852695e3c54d9ce0ac51e6fdcbeebe8b8d95c0f1/muon_optimizer-0.1.0-py3-none-any.whl", hash = "sha256:4b8e22e7c1a8e73c254c8f6941128ad490af1aba883d4eec0c7f0b8e2f330735" },
 ]
 
 [[package]]

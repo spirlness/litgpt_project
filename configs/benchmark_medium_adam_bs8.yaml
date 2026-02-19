@@ -1,0 +1,51 @@
+out_dir: ./checkpoints/bench_medium_adam_bs8
+precision: 16-mixed
+tokenizer_dir: ./data/tokenizer
+
+strategy: auto
+devices: 1
+num_nodes: 1
+
+data:
+  class_path: litgpt.data.TextFiles
+  init_args:
+    train_data_path: ./data/custom_text/train
+    val_data_path: ./data/custom_text/val
+    num_workers: 0
+
+train:
+  global_batch_size: 8
+  log_interval: 1
+  max_tokens: 12288
+  lr_warmup_steps: 2
+  micro_batch_size: 2
+  save_interval: 0
+  gradient_checkpointing: true
+  max_norm: 1.0
+  max_seq_length: 256
+
+eval:
+  interval: 0
+  final_validation: false
+
+resume: null
+
+checkpointing:
+  upload_to_hf: false
+
+optimization:
+  compile: false
+  compile_mode: default
+  compile_dynamic: false
+  compile_fullgraph: false
+  flash_attention: true
+  flash_attention_force: true
+  disable_math_fallback: false
+
+logger_name: csv
+
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 0.0003
+    weight_decay: 0.01

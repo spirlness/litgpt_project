@@ -1,10 +1,9 @@
-# T4 x2 (15GB each) optimized config
-out_dir: ./checkpoints
+out_dir: ./checkpoints/bench_medium_muon_bs8
 precision: 16-mixed
 tokenizer_dir: ./data/tokenizer
 
-# Multi-GPU settings with NCCL optimization for Kaggle
-devices: 2
+strategy: auto
+devices: 1
 num_nodes: 1
 
 data:
@@ -15,33 +14,32 @@ data:
     num_workers: 0
 
 train:
-  global_batch_size: 128
+  global_batch_size: 8
   log_interval: 1
-  max_tokens: 320000
-  lr_warmup_steps: 10
-  micro_batch_size: 16
-  save_interval: 1000
+  max_tokens: 12288
+  lr_warmup_steps: 2
+  micro_batch_size: 2
+  save_interval: 0
   gradient_checkpointing: true
   max_norm: 1.0
-  max_seq_length: 512
+  max_seq_length: 256
 
 eval:
   interval: 0
   final_validation: false
 
-resume: auto
+resume: null
 
-# Performance optimization options
+checkpointing:
+  upload_to_hf: false
+
 optimization:
-  # torch.compile settings
   compile: false
-  compile_mode: reduce-overhead
-  compile_dynamic: true
+  compile_mode: default
+  compile_dynamic: false
   compile_fullgraph: false
-
-  # Flash Attention settings (T4 supports SM 7.5, Flash Attention 2 needs SM 8.0+)
-  flash_attention: false
-  flash_attention_force: false
+  flash_attention: true
+  flash_attention_force: true
   disable_math_fallback: false
 
 logger_name: csv
