@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 # Ensure src is in sys.path for local runs
@@ -60,15 +61,21 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         # Import the module under test with patched dependencies
         module_name = "src.litgpt_moe.fixed_text_files"
         try:
-            # If already imported (e.g. by other tests or pytest collection), reload it
+            # Check if the module is already loaded and VALID (a ModuleType)
+            # If it's something else (like None or a Mock), import fresh.
             if module_name in sys.modules:
-                self.fixed_text_files_module = sys.modules[module_name]
-                importlib.reload(self.fixed_text_files_module)
+                mod = sys.modules[module_name]
+                if isinstance(mod, ModuleType):
+                    self.fixed_text_files_module = mod
+                    importlib.reload(self.fixed_text_files_module)
+                else:
+                    # Invalid entry in sys.modules, remove and reload
+                    del sys.modules[module_name]
+                    self.fixed_text_files_module = importlib.import_module(module_name)
             else:
                 self.fixed_text_files_module = importlib.import_module(module_name)
-        except (ImportError, KeyError, AttributeError):
-            # Fallback: force re-import if reload failed or module was somehow invalid
-            # This handles cases where the module object in sys.modules is stale or weird
+        except (ImportError, KeyError, AttributeError, TypeError):
+            # Fallback: force clean import
             if module_name in sys.modules:
                 del sys.modules[module_name]
             self.fixed_text_files_module = importlib.import_module(module_name)
@@ -79,6 +86,11 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         # Stop patcher to restore original modules
         self.patcher.stop()
         shutil.rmtree(self.temp_dir)
+
+        # Cleanup: Remove the module we imported so it doesn't persist with mocks
+        module_name = "src.litgpt_moe.fixed_text_files"
+        if module_name in sys.modules:
+            del sys.modules[module_name]
 
     def test_prepare_data_files_enumeration(self):
         # Setup the module
