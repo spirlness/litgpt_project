@@ -17,10 +17,14 @@ def test_save_checkpoint_async_upload():
     mock_model = MagicMock()
     mock_optimizer = MagicMock()
 
-    # Mock the executor to intercept submit calls
-    with patch("run_train._get_upload_executor") as mock_get_executor:
+    # Reset the global executor to ensure _get_upload_executor creates a new one or uses the mock if patched correctly
+    run_train._UPLOAD_EXECUTOR = None
+
+    # Patch the ThreadPoolExecutor class in concurrent.futures to return a mock executor
+    # This is more robust than patching _get_upload_executor if run_train is already imported/initialized
+    with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor_cls:
         mock_executor = MagicMock()
-        mock_get_executor.return_value = mock_executor
+        mock_executor_cls.return_value = mock_executor
 
         # Call save_checkpoint with upload enabled
         run_train.save_checkpoint(
@@ -34,7 +38,7 @@ def test_save_checkpoint_async_upload():
             hf_repo_id="test/repo"
         )
 
-        # Assert that submit was called on the executor
+        # Assert that submit was called on the executor instance
         mock_executor.submit.assert_called_once()
 
         # Verify arguments passed to submit
