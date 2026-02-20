@@ -56,23 +56,17 @@ class FixedTextFiles(DataModule):
 
         # Check if preprocessed data already exists
         if Path(self.out_path_train).is_dir() and Path(self.out_path_val).is_dir():
-            print(f"\nSkipping data preprocessing: Found preprocessed data in {self.out_path_train} and {self.out_path_val}.\n")
+            print(
+                f"\nSkipping data preprocessing: Found preprocessed data in {self.out_path_train} and {self.out_path_val}.\n"
+            )
             return
 
-        train_files = sorted(
-            entry.path
-            for entry in os.scandir(self.train_data_path)
-            if entry.name.endswith(".txt")
-        )
+        train_files = sorted(entry.path for entry in os.scandir(self.train_data_path) if entry.name.endswith(".txt"))
         assert len(train_files) > 0, f"No .txt files found in training data {self.train_data_path}"
 
         if self.val_data_path is not None:
             self.val_data_path = Path(self.val_data_path)
-            val_files = sorted(
-                entry.path
-                for entry in os.scandir(self.val_data_path)
-                if entry.name.endswith(".txt")
-            )
+            val_files = sorted(entry.path for entry in os.scandir(self.val_data_path) if entry.name.endswith(".txt"))
             assert len(val_files) > 0, f"No .txt files found in validation data {self.val_data_path}"
         # Train/Test split. Use chunk 0 as test split, rest as training
         else:
@@ -176,7 +170,9 @@ class FixedTextFiles(DataModule):
 
 def tokenize(filename: str, tokenizer: Optional[Tokenizer]):
     if tokenizer is None:
-        raise ValueError("Tokenizer is None. If using this One `litgpt pretrain`, please provide a valid `--tokenizer_dir` path.")
+        raise ValueError(
+            "Tokenizer is None. If using this One `litgpt pretrain`, please provide a valid `--tokenizer_dir` path."
+        )
     with open(filename, encoding="utf-8") as file:
         text = file.read()
     text = text.strip()
@@ -201,4 +197,6 @@ def collate_fixed_length(batch: list, *, batch_size: int, max_seq_length: int, p
 
 def validate_tokenizer(tokenizer: Tokenizer) -> None:
     if tokenizer is None:
-        raise ValueError("Tokenizer is None. If using this One `litgpt pretrain`, please provide a valid `--tokenizer_dir` path.")
+        raise ValueError(
+            "Tokenizer is None. If using this One `litgpt pretrain`, please provide a valid `--tokenizer_dir` path."
+        )

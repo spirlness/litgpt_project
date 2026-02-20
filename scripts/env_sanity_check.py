@@ -2,6 +2,7 @@
 Simple environment sanity check script for CI.
 Verifies that key dependencies can be imported successfully.
 """
+
 import sys
 
 try:

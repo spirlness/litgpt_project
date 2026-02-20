@@ -176,11 +176,12 @@ class TestFlashAttention:
         # Check if flash attention is actually available before enforcing it
         try:
             from torch.nn.attention import SDPBackend, sdpa_kernel
+
             q_dummy = torch.randn(1, 1, 16, 16, device="cuda", dtype=torch.float16)
             with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-                 torch.nn.functional.scaled_dot_product_attention(q_dummy, q_dummy, q_dummy)
+                torch.nn.functional.scaled_dot_product_attention(q_dummy, q_dummy, q_dummy)
         except RuntimeError:
-             pytest.skip("Flash Attention backend not available in PyTorch build")
+            pytest.skip("Flash Attention backend not available in PyTorch build")
 
         from torch.nn.attention import SDPBackend, sdpa_kernel
 
@@ -206,9 +207,9 @@ class TestFlashAttention:
         try:
             q_dummy = torch.randn(1, 1, 16, 16, device="cuda", dtype=torch.float16)
             with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-                 torch.nn.functional.scaled_dot_product_attention(q_dummy, q_dummy, q_dummy)
+                torch.nn.functional.scaled_dot_product_attention(q_dummy, q_dummy, q_dummy)
         except RuntimeError:
-             pytest.skip("Flash Attention backend not available in PyTorch build")
+            pytest.skip("Flash Attention backend not available in PyTorch build")
 
         batch, heads, seq_len, head_dim = 4, 8, 512, 64
         q = torch.randn(batch, heads, seq_len, head_dim, device="cuda", dtype=torch.bfloat16)

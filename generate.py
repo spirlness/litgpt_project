@@ -143,7 +143,7 @@ def generate(
     encoded = tokenizer.encode(prompt, device=torch.device(device))
     if encoded.size(0) > config.block_size:
         print(f"Warning: Prompt length {encoded.size(0)} exceeds block size {config.block_size}. Truncating.")
-        encoded = encoded[-config.block_size:]
+        encoded = encoded[-config.block_size :]
 
     prompt_length = encoded.size(0)
 

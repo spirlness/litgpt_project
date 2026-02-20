@@ -228,20 +228,14 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
         use_compile = opt_cfg.get("compile", False)
 
     compile_mode = args.compile_mode or opt_cfg.get("compile_mode", "default")
-    compile_dynamic = (
-        args.compile_dynamic if args.compile_dynamic is not None else opt_cfg.get("compile_dynamic", False)
-    )
+    compile_dynamic = args.compile_dynamic if args.compile_dynamic is not None else opt_cfg.get("compile_dynamic", False)
     compile_fullgraph = (
         args.compile_fullgraph if args.compile_fullgraph is not None else opt_cfg.get("compile_fullgraph", False)
     )
 
-    use_flash_attention = (
-        args.flash_attention if args.flash_attention is not None else opt_cfg.get("flash_attention", False)
-    )
+    use_flash_attention = args.flash_attention if args.flash_attention is not None else opt_cfg.get("flash_attention", False)
     flash_attention_force = (
-        args.flash_attention_force
-        if args.flash_attention_force is not None
-        else opt_cfg.get("flash_attention_force", False)
+        args.flash_attention_force if args.flash_attention_force is not None else opt_cfg.get("flash_attention_force", False)
     )
     disable_math_fallback = opt_cfg.get("disable_math_fallback", False)
 
@@ -276,7 +270,7 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     if grad_checkpointing:
         # patch_gradient_checkpointing()
         # fabric.print("Enabled gradient checkpointing via Block.forward patch")
-        pass # Will be applied to model instance later
+        pass  # Will be applied to model instance later
 
     out_dir = Path(train_cfg.get("out_dir", "checkpoints"))
     tokenizer_dir = Path(train_cfg.get("tokenizer_dir", "data/tokenizer"))
@@ -293,7 +287,7 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     # # Inject MoE args back into config object
     # for key, value in moe_args.items():
     #     setattr(config, key, value)
-    
+
     # Use MoEConfig directly, which handles moe_args via inheritance if passed in model_cfg
     # We re-merge moe_args back into model_cfg if they were popped, or just pass model_cfg if it contains them
     model_cfg.update(moe_args)
@@ -318,12 +312,8 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
             # Only patch cudagraph for non-MoE models as MoE has dynamic control flow
             # if model_cfg.get("n_expert", 0) == 0:
             #     patch_cudagraph_for_compile()
-            model = torch.compile(
-                model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
-            )
-            fabric.print(
-                f"Model compiled with mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}"
-            )
+            model = torch.compile(model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph)
+            fabric.print(f"Model compiled with mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}")
 
     train_data_path = data_section.get("init_args", {}).get("train_data_path")
     val_data_path = data_section.get("init_args", {}).get("val_data_path")
@@ -503,9 +493,7 @@ if __name__ == "__main__":
     parser.add_argument("--model-config", type=Path, default=Path("configs/moe_200m.yaml"))
     parser.add_argument("--train-config", type=Path, default=Path("configs/kaggle_t4_ddp.yaml"))
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument(
-        "--compile-mode", type=str, choices=["default", "reduce-overhead", "max-autotune"], default=None
-    )
+    parser.add_argument("--compile-mode", type=str, choices=["default", "reduce-overhead", "max-autotune"], default=None)
     parser.add_argument("--compile-dynamic", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--compile-fullgraph", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--flash-attention", action=argparse.BooleanOptionalAction, default=None)

@@ -153,21 +153,21 @@ def validate(fabric, model, val_dataloader, max_iters, verbose=True):
     Originally patched into litgpt.pretrain.validate.
     """
     import litgpt.pretrain
-    
+
     fabric.barrier()
     if verbose:
         fabric.print("Validating ...")
     model.eval()
 
     losses = []
-    # Note: cycle_iterator isn't strictly needed if we just iterate normally, 
+    # Note: cycle_iterator isn't strictly needed if we just iterate normally,
     # but for CUDAGraphs we specifically need to mark steps.
     for k, batch in enumerate(val_dataloader):
         if k >= max_iters:
             break
         if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
-             torch.compiler.cudagraph_mark_step_begin()
-             
+            torch.compiler.cudagraph_mark_step_begin()
+
         input_ids = batch[:, 0 : model.max_seq_length].contiguous().long()
         targets = batch[:, 1 : (model.max_seq_length + 1)].contiguous().long()
         logits = model(input_ids)
@@ -181,7 +181,7 @@ def validate(fabric, model, val_dataloader, max_iters, verbose=True):
         # val_loss = torch.tensor(float("nan"), device=device)
         # Safer to use fabric.device
         val_loss = torch.tensor(float("nan"), device=fabric.device)
-        
+
     model.train()
     fabric.barrier()
     return val_loss
@@ -202,29 +202,22 @@ def apply_gradient_checkpointing(model: torch.nn.Module) -> None:
         print("Warning: Could not find transformer blocks to apply gradient checkpointing.")
         return
 
-    
     # We need to wrap the forward method of each block instance
     for block in blocks:
         # Create a bound method wrapper that calls checkpoint
         def _checkpointed_forward(self, *args, **kwargs):
-             # We use the ORIGINAL forward method of the class, bound to 'self' implicitly 
-             # by calling it on 'self', but we need to avoid recursion since we are overwriting self.forward.
-             # So we need to access the class method.
-             return torch.utils.checkpoint.checkpoint(
-                 type(self).forward, 
-                 self, 
-                 *args, 
-                 **kwargs, 
-                 use_reentrant=False
-             )
-        
+            # We use the ORIGINAL forward method of the class, bound to 'self' implicitly
+            # by calling it on 'self', but we need to avoid recursion since we are overwriting self.forward.
+            # So we need to access the class method.
+            return torch.utils.checkpoint.checkpoint(type(self).forward, self, *args, **kwargs, use_reentrant=False)
+
         # Bind the new method to the instance
         # Use types.MethodType to bind the function to the instance
         import types
-        block.forward = types.MethodType(_checkpointed_forward, block)
-        
-    print("Gradient checkpointing applied to transformer blocks.")
 
+        block.forward = types.MethodType(_checkpointed_forward, block)
+
+    print("Gradient checkpointing applied to transformer blocks.")
 
 
 def get_latest_metrics_csv(out_dir: Path) -> Optional[Path]:

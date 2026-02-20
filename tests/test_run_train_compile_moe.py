@@ -36,24 +36,32 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         class MockTensor(MagicMock):
             def numel(self):
                 return 1024
+
             def __getitem__(self, idx):
                 return self
+
             def contiguous(self):
                 return self
+
             def view(self, *args):
                 return self
+
             def detach(self):
                 return self
+
             def to(self, *args, **kwargs):
                 return self
 
             # Allow comparison with int just in case
             def __ge__(self, other):
                 return True
+
             def __gt__(self, other):
                 return True
+
             def __le__(self, other):
                 return True
+
             def __lt__(self, other):
                 return True
 
@@ -80,6 +88,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
 
         try:
             import run_train
+
             importlib.reload(run_train)
         except ImportError:
             pass
@@ -100,7 +109,18 @@ class TestRunTrainCompileMoE(unittest.TestCase):
     @patch("run_train.build_optimizer")
     @patch("run_train.Path")
     @patch("run_train.F.cross_entropy")
-    def test_moe_compile_enabled_no_cudagraph(self, mock_cross_entropy, mock_path, mock_build_opt, mock_data, mock_tok, mock_gpt, mock_compile, mock_fabric, mock_load_yaml):
+    def test_moe_compile_enabled_no_cudagraph(
+        self,
+        mock_cross_entropy,
+        mock_path,
+        mock_build_opt,
+        mock_data,
+        mock_tok,
+        mock_gpt,
+        mock_compile,
+        mock_fabric,
+        mock_load_yaml,
+    ):
         # Setup mocks
         mock_gpt.return_value.config.moe_aux_loss_weight = 0.0
         mock_gpt.return_value.router_stats = {}
@@ -121,17 +141,21 @@ class TestRunTrainCompileMoE(unittest.TestCase):
 
         # First call for model_config, second for train_config
         mock_load_yaml.side_effect = [
-            {"model_config": {"n_expert": 8, "block_size": 1024}}, # MoE model
-            {"optimization": {"compile": True}, "train": {"max_tokens": 10}, "data": {"init_args": {"train_data_path": "dummy"}}} # Compile requested
+            {"model_config": {"n_expert": 8, "block_size": 1024}},  # MoE model
+            {
+                "optimization": {"compile": True},
+                "train": {"max_tokens": 10},
+                "data": {"init_args": {"train_data_path": "dummy"}},
+            },  # Compile requested
         ]
 
         # Mock fabric instance
         fabric_instance = mock_fabric.return_value
         fabric_instance.global_rank = 0
         fabric_instance.world_size = 1
-        fabric_instance.device = MagicMock() # torch.device mock
+        fabric_instance.device = MagicMock()  # torch.device mock
         fabric_instance.setup.side_effect = lambda m, o: (m, o)
-        fabric_instance.setup_dataloaders.return_value = MagicMock() # dataloader
+        fabric_instance.setup_dataloaders.return_value = MagicMock()  # dataloader
 
         # Mock data loader iterator
         mock_dataloader = fabric_instance.setup_dataloaders.return_value
@@ -141,7 +165,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
 
         # Mock args
         args = MagicMock()
-        args.compile = None # Allow config to control it
+        args.compile = None  # Allow config to control it
         args.model_config = "model_config.yaml"
         args.train_config = "train_config.yaml"
         args.compile_mode = None
@@ -154,7 +178,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         try:
             self.run_train.train(args.model_config, args.train_config, args)
         except StopIteration:
-            pass # Iterator exhausted
+            pass  # Iterator exhausted
         except Exception as e:
             # If unexpected error, let it raise to debug
             raise e
@@ -171,7 +195,18 @@ class TestRunTrainCompileMoE(unittest.TestCase):
     @patch("run_train.build_optimizer")
     @patch("run_train.Path")
     @patch("run_train.F.cross_entropy")
-    def test_non_moe_compile_enabled(self, mock_cross_entropy, mock_path, mock_build_opt, mock_data, mock_tok, mock_gpt, mock_compile, mock_fabric, mock_load_yaml):
+    def test_non_moe_compile_enabled(
+        self,
+        mock_cross_entropy,
+        mock_path,
+        mock_build_opt,
+        mock_data,
+        mock_tok,
+        mock_gpt,
+        mock_compile,
+        mock_fabric,
+        mock_load_yaml,
+    ):
         # Setup mocks for non-MoE
         mock_gpt.return_value.config.moe_aux_loss_weight = 0.0
         mock_gpt.return_value.router_stats = {}
@@ -186,8 +221,12 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         mock_path.return_value.exists.return_value = True
 
         mock_load_yaml.side_effect = [
-            {"model_config": {"n_expert": 0, "block_size": 1024}}, # Non-MoE
-            {"optimization": {"compile": True}, "train": {"max_tokens": 10}, "data": {"init_args": {"train_data_path": "dummy"}}}
+            {"model_config": {"n_expert": 0, "block_size": 1024}},  # Non-MoE
+            {
+                "optimization": {"compile": True},
+                "train": {"max_tokens": 10},
+                "data": {"init_args": {"train_data_path": "dummy"}},
+            },
         ]
 
         fabric_instance = mock_fabric.return_value
@@ -217,6 +256,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
 
         # Assert compile WAS called (this is standard behavior)
         mock_compile.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

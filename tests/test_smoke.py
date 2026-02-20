@@ -109,7 +109,10 @@ def test_env_sanity_check_local() -> None:
         )
 
     # Skip instead of failing when core runtime deps are unavailable in lightweight environments.
-    if result.returncode != 0 and ("No module named 'torch'" in (result.stderr or "") or "ModuleNotFoundError: No module named 'torch'" in (result.stderr or "")):
+    if result.returncode != 0 and (
+        "No module named 'torch'" in (result.stderr or "")
+        or "ModuleNotFoundError: No module named 'torch'" in (result.stderr or "")
+    ):
         pytest.skip("torch is not installed in this environment")
 
     assert result.returncode == 0, result.stderr or result.stdout

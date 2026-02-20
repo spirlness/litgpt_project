@@ -1,4 +1,5 @@
 import argparse
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,9 @@ from litgpt.model import GPT
 from torch.utils.data import DataLoader, Dataset
 
 from src.litgpt_moe.config import MoEConfig
+
+# Use this warning suppression to enable zero-copy torch.from_numpy creation from read-only np.memmap views
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
 
 
 class TextDataset(Dataset):
@@ -20,8 +24,13 @@ class TextDataset(Dataset):
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
-        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
+        # Optimized zero-copy loading:
+        # 1. View uint16 data as int16 (no copy)
+        # 2. Create tensor from view (no copy)
+        # Note: Values > 32767 will be negative. They must be cast to long and fixed with .bitwise_and_(0xffff)
+        # in the training/eval loop after moving to device.
+        x = torch.from_numpy(self.data[idx : idx + self.block_size].view(np.int16))
+        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].view(np.int16))
         return x, y
 
 
@@ -131,7 +140,7 @@ def evaluate(
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=num_workers > 0,
-        drop_last=False
+        drop_last=False,
     )
 
     losses = []
@@ -148,6 +157,11 @@ def evaluate(
                 x, y = next(data_iter)
 
             x, y = x.to(device), y.to(device)
+
+            # Ensure data is long and unsigned (fixing potential int16 negative values)
+            if x.dtype != torch.long:
+                x = x.long().bitwise_and_(0xFFFF)
+                y = y.long().bitwise_and_(0xFFFF)
 
             logits = model(x)
 

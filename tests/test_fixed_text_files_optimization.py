@@ -1,4 +1,3 @@
-
 import importlib
 import os
 import shutil
@@ -44,10 +43,17 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
 
         # Mock DataModule
         class MockDataModule:
-            def __init__(self): pass
-            def prepare_data(self): pass
-            def setup(self, stage=None): pass
-            def connect(self, **kwargs): pass
+            def __init__(self):
+                pass
+
+            def prepare_data(self):
+                pass
+
+            def setup(self, stage=None):
+                pass
+
+            def connect(self, **kwargs):
+                pass
 
         self.mock_modules["litgpt.data"].DataModule = MockDataModule
         self.mock_modules["torch.utils.data"].DataLoader = MagicMock()
@@ -64,12 +70,14 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
         # If it was already imported, reload it. If not, import it.
         try:
             import src.litgpt_moe.fixed_text_files
+
             importlib.reload(src.litgpt_moe.fixed_text_files)
         except ImportError:
             # Should not happen if path is correct
             pass
 
         from src.litgpt_moe.fixed_text_files import FixedTextFiles
+
         self.FixedTextFiles = FixedTextFiles
 
     def tearDown(self):
@@ -85,7 +93,7 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
     def test_prepare_data_files_enumeration(self):
         # Setup the module
         module = self.FixedTextFiles(train_data_path=self.train_dir, num_workers=4)
-        module.tokenizer = MagicMock() # Mock tokenizer
+        module.tokenizer = MagicMock()  # Mock tokenizer
 
         # Mock validate_tokenizer in the module namespace or patch
         with patch("src.litgpt_moe.fixed_text_files.validate_tokenizer"):
@@ -143,6 +151,7 @@ class TestFixedTextFilesOptimization(unittest.TestCase):
                 inputs2 = kwargs2["inputs"]
                 expected_val = [str(val_dir / "val.txt")]
                 self.assertEqual(inputs2, expected_val)
+
 
 if __name__ == "__main__":
     unittest.main()
