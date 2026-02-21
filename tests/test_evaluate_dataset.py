@@ -1,13 +1,15 @@
 import sys
 from pathlib import Path
-import torch
+
 import numpy as np
 import pytest
+import torch
 
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from evaluate import TextDataset
+
 
 def test_text_dataset_zero_copy(tmp_path):
     # Create dummy data
