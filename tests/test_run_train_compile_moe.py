@@ -159,8 +159,8 @@ class TestRunTrainCompileMoE(unittest.TestCase):
             # If unexpected error, let it raise to debug
             raise e
 
-        # Assert compile was NOT called (this is the desired behavior for MoE)
-        mock_compile.assert_not_called()
+        # Assert compile WAS called (this is the new desired behavior for MoE)
+        mock_compile.assert_called_once()
 
     @patch("run_train.load_yaml")
     @patch("run_train.L.Fabric")
