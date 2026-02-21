@@ -51,7 +51,7 @@ def _get_upload_executor() -> concurrent.futures.ThreadPoolExecutor:
 def _shutdown_upload_executor() -> None:
     global _UPLOAD_EXECUTOR
     if _UPLOAD_EXECUTOR is not None:
-        _UPLOAD_EXECUTOR.shutdown(wait=False)
+        _UPLOAD_EXECUTOR.shutdown(wait=True)
         _UPLOAD_EXECUTOR = None
 
 
