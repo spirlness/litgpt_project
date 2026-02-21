@@ -1,4 +1,5 @@
 import argparse
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,9 @@ from litgpt.model import GPT
 from torch.utils.data import DataLoader, Dataset
 
 from src.litgpt_moe.config import MoEConfig
+
+# Optimization: Suppress warning for read-only memmap when creating tensors
+warnings.filterwarnings("ignore", "The given NumPy array is not writable")
 
 
 class TextDataset(Dataset):
@@ -20,8 +24,8 @@ class TextDataset(Dataset):
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
-        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
+        x = torch.from_numpy(self.data[idx : idx + self.block_size].view(np.int16))
+        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].view(np.int16))
         return x, y
 
 
@@ -147,7 +151,12 @@ def evaluate(
                 data_iter = iter(dataloader)
                 x, y = next(data_iter)
 
-            x, y = x.to(device), y.to(device)
+            # We convert to int64 only after transfer to device to minimize transfer overhead
+            x = x.to(device).long()
+            y = y.to(device).long()
+            # Correct negative values from int16 view of uint16 data
+            x &= 0xffff
+            y &= 0xffff
 
             logits = model(x)
 
