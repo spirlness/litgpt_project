@@ -1,9 +1,9 @@
-
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import time
+
 
 class TestRunTrainUpload(unittest.TestCase):
     def setUp(self):
