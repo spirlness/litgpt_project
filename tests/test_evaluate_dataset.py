@@ -1,17 +1,18 @@
-
-import unittest
-import torch
-import numpy as np
-from pathlib import Path
-import tempfile
+import os
 import shutil
 import sys
-import os
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+import torch
 
 # Add project root to sys.path to allow importing from evaluate.py
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from evaluate import TextDataset
+from evaluate import TextDataset  # noqa: E402
+
 
 class TestEvaluateDataset(unittest.TestCase):
     def setUp(self):
