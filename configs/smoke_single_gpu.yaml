@@ -9,7 +9,7 @@ data:
   init_args:
     train_data_path: ./data/custom_text/train
     val_data_path: ./data/custom_text/val
-    num_workers: 2
+    num_workers: 0
 
 train:
   micro_batch_size: 1
