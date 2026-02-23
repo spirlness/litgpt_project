@@ -1,4 +1,5 @@
 import argparse
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,9 @@ from litgpt.model import GPT
 from torch.utils.data import DataLoader, Dataset
 
 from src.litgpt_moe.config import MoEConfig
+
+# Suppress warning for creating tensor from read-only memmap
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
 
 
 class TextDataset(Dataset):
@@ -20,8 +24,9 @@ class TextDataset(Dataset):
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
-        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
+        # Optimized: return int16 view of uint16 data to avoid copy and expansion during transfer
+        x = torch.from_numpy(self.data[idx : idx + self.block_size].view(np.int16))
+        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].view(np.int16))
         return x, y
 
 
@@ -60,6 +65,9 @@ def evaluate(
         loaded = yaml.safe_load(f) or {}
 
     model_config_dict = loaded.get("model_config", loaded)
+
+    if "norm_eps" in model_config_dict:
+        model_config_dict["norm_eps"] = float(model_config_dict["norm_eps"])
 
     # Extract MoE specific args that are not in LitGPT Config
     moe_args = {}
@@ -148,6 +156,11 @@ def evaluate(
                 x, y = next(data_iter)
 
             x, y = x.to(device), y.to(device)
+
+            # Fix int16 view back to correct uint16 values (as long)
+            # This is faster than transferring int64 directly
+            x = x.long().bitwise_and_(0xffff)
+            y = y.long().bitwise_and_(0xffff)
 
             logits = model(x)
 
