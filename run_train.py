@@ -17,6 +17,7 @@ os.environ.setdefault("NCCL_DEBUG", "WARN")
 import argparse
 import concurrent.futures
 import importlib
+import multiprocessing
 import time
 from pathlib import Path
 from typing import cast
@@ -38,13 +39,15 @@ from src.litgpt_moe.utils import (
 )
 
 
-_UPLOAD_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+_UPLOAD_EXECUTOR: concurrent.futures.ProcessPoolExecutor | None = None
 
 
-def _get_upload_executor() -> concurrent.futures.ThreadPoolExecutor:
+def _get_upload_executor() -> concurrent.futures.ProcessPoolExecutor:
     global _UPLOAD_EXECUTOR
     if _UPLOAD_EXECUTOR is None:
-        _UPLOAD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        _UPLOAD_EXECUTOR = concurrent.futures.ProcessPoolExecutor(
+            max_workers=1, mp_context=multiprocessing.get_context("spawn")
+        )
     return _UPLOAD_EXECUTOR
 
 
