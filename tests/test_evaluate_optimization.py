@@ -1,13 +1,14 @@
-import sys
 import os
-import torch
+import sys
+
 import numpy as np
-from pathlib import Path
 import pytest
+import torch
 
 # Add root to sys.path to import evaluate
 sys.path.append(os.getcwd())
-from evaluate import TextDataset
+from evaluate import TextDataset  # noqa: E402
+
 
 def test_text_dataset_zero_copy_optimization(tmp_path):
     # Create a dummy bin file with specific values
