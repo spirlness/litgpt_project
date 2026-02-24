@@ -312,18 +312,12 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
         fabric.print("Enabled gradient checkpointing via instance wrapping")
 
     if use_compile:
-        if model_cfg.get("n_expert", 0) > 0:
-            fabric.print("Disabling torch.compile for MoE model due to known issues in this environment.")
-        else:
-            # Only patch cudagraph for non-MoE models as MoE has dynamic control flow
-            # if model_cfg.get("n_expert", 0) == 0:
-            #     patch_cudagraph_for_compile()
-            model = torch.compile(
-                model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
-            )
-            fabric.print(
-                f"Model compiled with mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}"
-            )
+        model = torch.compile(
+            model, mode=compile_mode, dynamic=compile_dynamic, fullgraph=compile_fullgraph
+        )
+        fabric.print(
+            f"Model compiled with mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}"
+        )
 
     train_data_path = data_section.get("init_args", {}).get("train_data_path")
     val_data_path = data_section.get("init_args", {}).get("val_data_path")
