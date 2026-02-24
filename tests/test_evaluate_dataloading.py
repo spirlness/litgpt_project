@@ -1,14 +1,15 @@
-import pytest
+import os
+import sys
+import tempfile
+from pathlib import Path
+
 import numpy as np
 import torch
-from pathlib import Path
-import tempfile
-import sys
-import os
 
 # Ensure evaluate.py is importable
 sys.path.append(os.getcwd())
 from evaluate import TextDataset
+
 
 def test_text_dataset_zero_copy_correctness():
     # Create temporary file with known values
