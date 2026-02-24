@@ -2,6 +2,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+
 class TestRunTrainUpload(unittest.TestCase):
     def setUp(self):
         # Create a patcher for sys.modules
@@ -41,7 +42,7 @@ class TestRunTrainUpload(unittest.TestCase):
         if self.run_train._UPLOAD_EXECUTOR:
             try:
                 self.run_train._UPLOAD_EXECUTOR.shutdown(wait=False)
-            except:
+            except Exception:
                 pass
         self.run_train._UPLOAD_EXECUTOR = None
 
