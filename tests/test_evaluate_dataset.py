@@ -1,18 +1,16 @@
+# Try to import litgpt. If it fails, mock it.
+import importlib.util
+import os
 import sys
 import unittest
+from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import MagicMock
+
 import numpy as np
 import torch
-from pathlib import Path
-import os
-from dataclasses import dataclass
 
-# Try to import litgpt. If it fails, mock it.
-try:
-    import litgpt
-    import litgpt.config
-    import litgpt.model
-except ImportError:
+if not importlib.util.find_spec("litgpt"):
     # Mock litgpt dependencies before importing evaluate
 
     @dataclass
@@ -39,7 +37,7 @@ except ImportError:
 # Now import evaluate
 try:
     from evaluate import TextDataset
-except ImportError as e:
+except ImportError:
     # Fallback for when running from root
     sys.path.append(os.getcwd())
     from evaluate import TextDataset
