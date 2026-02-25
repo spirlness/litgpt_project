@@ -1,15 +1,15 @@
 import sys
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-import torch
+
 import numpy as np
-import io
+import pytest
+import torch
 
 # Add repo root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from evaluate import evaluate, TextDataset
+from evaluate import evaluate  # noqa: E402
+
 
 @pytest.fixture
 def mock_data(tmp_path):
