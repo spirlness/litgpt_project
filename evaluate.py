@@ -152,12 +152,12 @@ def evaluate(
             logits = model(x)
 
             loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
-            losses.append(loss.item())
+            losses.append(loss)
 
             if (i + 1) % 10 == 0:
                 print(f"Batch {i + 1}/{max_batches}, Current Loss: {loss.item():.4f}")
 
-    avg_loss = sum(losses) / len(losses)
+    avg_loss = torch.stack(losses).mean().item()
     perplexity = torch.exp(torch.tensor(avg_loss)).item()
 
     print("=" * 40)
