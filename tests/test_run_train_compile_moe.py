@@ -100,7 +100,7 @@ class TestRunTrainCompileMoE(unittest.TestCase):
     @patch("run_train.build_optimizer")
     @patch("run_train.Path")
     @patch("run_train.F.cross_entropy")
-    def test_moe_compile_enabled_no_cudagraph(self, mock_cross_entropy, mock_path, mock_build_opt, mock_data, mock_tok, mock_gpt, mock_compile, mock_fabric, mock_load_yaml):
+    def test_moe_compile_enabled(self, mock_cross_entropy, mock_path, mock_build_opt, mock_data, mock_tok, mock_gpt, mock_compile, mock_fabric, mock_load_yaml):
         # Setup mocks
         mock_gpt.return_value.config.moe_aux_loss_weight = 0.0
         mock_gpt.return_value.router_stats = {}
@@ -130,7 +130,20 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         fabric_instance.global_rank = 0
         fabric_instance.world_size = 1
         fabric_instance.device = MagicMock() # torch.device mock
-        fabric_instance.setup.side_effect = lambda m, o: (m, o)
+
+        # Mock setup to return a wrapped model with _forward_module
+        def mock_setup(model, optimizer):
+            wrapper = MagicMock()
+            # The wrapper should have _forward_module pointing to the original model (or what represents the inner module)
+            wrapper._forward_module = model
+            # Forward attributes accessed in training loop
+            wrapper.config = model.config
+            wrapper.router_stats = model.router_stats
+            # Ensure calling wrapper(x) works if needed, but torch.compile operates on wrapper._forward_module
+            return wrapper, optimizer
+
+        fabric_instance.setup.side_effect = mock_setup
+
         fabric_instance.setup_dataloaders.return_value = MagicMock() # dataloader
 
         # Mock data loader iterator
@@ -159,8 +172,17 @@ class TestRunTrainCompileMoE(unittest.TestCase):
             # If unexpected error, let it raise to debug
             raise e
 
-        # Assert compile was NOT called (this is the desired behavior for MoE)
-        mock_compile.assert_not_called()
+        # Assert compile WAS called
+        mock_compile.assert_called_once()
+
+        # Verify it was called on the _forward_module (the original model mock)
+        # mock_gpt.return_value is the model instance created inside train()
+        # mock_setup wraps it, so wrapper._forward_module == mock_gpt.return_value
+        # check call args
+        args_list, _ = mock_compile.call_args
+        compiled_obj = args_list[0]
+
+        self.assertEqual(compiled_obj, mock_gpt.return_value, "Should compile the inner module")
 
     @patch("run_train.load_yaml")
     @patch("run_train.L.Fabric")
@@ -194,7 +216,11 @@ class TestRunTrainCompileMoE(unittest.TestCase):
         fabric_instance.global_rank = 0
         fabric_instance.world_size = 1
         fabric_instance.device = MagicMock()
+
+        # Simulating non-wrapped model or model without _forward_module for this test case
+        # Or standard behavior where we just return the model
         fabric_instance.setup.side_effect = lambda m, o: (m, o)
+
         fabric_instance.setup_dataloaders.return_value = MagicMock()
         mock_dataloader = fabric_instance.setup_dataloaders.return_value
         mock_batch = self.mock_modules["torch"].randint(0, 100, (1, 1025))
