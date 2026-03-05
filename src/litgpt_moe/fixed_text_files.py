@@ -1,5 +1,8 @@
 # Copyright Lightning AI. Licensed under the Apache License 2.0, see LICENSE file.
+import hashlib
+import json
 import os
+import shutil
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -9,6 +12,8 @@ import torch
 from litgpt.data import DataModule
 from litgpt.tokenizer import Tokenizer
 from torch.utils.data import DataLoader
+
+MANIFEST_FILENAME = ".litgpt_preprocess_manifest.json"
 
 
 @dataclass
@@ -50,14 +55,86 @@ class FixedTextFiles(DataModule):
         self.batch_size = batch_size or 1
         self.max_seq_length = (max_seq_length or -1) + 1  # Add 1 because we need the next token
 
+    @staticmethod
+    def _latest_mtime_ns(paths: list[Path]) -> int:
+        latest = 0
+        for path in paths:
+            try:
+                mtime = path.stat().st_mtime_ns
+            except OSError:
+                continue
+            if mtime > latest:
+                latest = mtime
+        return latest
+
+    @staticmethod
+    def _manifest_path(output_dir: Path) -> Path:
+        return output_dir / MANIFEST_FILENAME
+
+    def _split_signature(self, files: list[str]) -> str:
+        hasher = hashlib.sha256()
+        hasher.update(str(self.max_seq_length).encode("utf-8"))
+        if self.tokenizer is not None:
+            hasher.update(str(self.tokenizer.vocab_size).encode("utf-8"))
+            if self.tokenizer.eos_id is not None:
+                hasher.update(str(self.tokenizer.eos_id).encode("utf-8"))
+        for item in files:
+            path = Path(item)
+            stat = path.stat()
+            hasher.update(str(path.resolve()).encode("utf-8"))
+            hasher.update(str(stat.st_size).encode("utf-8"))
+            hasher.update(str(stat.st_mtime_ns).encode("utf-8"))
+        return hasher.hexdigest()
+
+    def _split_is_up_to_date(self, output_dir: Path, expected_signature: str, source_files: list[str]) -> bool:
+        if not output_dir.is_dir():
+            return False
+
+        manifest_path = self._manifest_path(output_dir)
+        if manifest_path.exists():
+            try:
+                with manifest_path.open("r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+                return manifest.get("signature") == expected_signature
+            except Exception:
+                return False
+
+        # Back-compat for older preprocessed dirs without manifest:
+        # if output files are newer than source .txt files, keep current artifacts and backfill manifest.
+        source_latest = self._latest_mtime_ns([Path(p) for p in source_files])
+        output_latest = self._latest_mtime_ns([p for p in output_dir.rglob("*") if p.is_file()])
+        return output_latest > 0 and source_latest > 0 and output_latest >= source_latest
+
+    def _write_split_manifest(self, output_dir: Path, signature: str, source_files: list[str]) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = self._manifest_path(output_dir)
+
+        vocab_size = None
+        eos_id = None
+        if self.tokenizer is not None:
+            try:
+                vocab_size = int(self.tokenizer.vocab_size)
+            except Exception:
+                vocab_size = None
+            try:
+                eos_id = int(self.tokenizer.eos_id) if self.tokenizer.eos_id is not None else None
+            except Exception:
+                eos_id = None
+
+        payload = {
+            "signature": signature,
+            "source_file_count": len(source_files),
+            "max_seq_length": self.max_seq_length,
+            "num_workers": self.num_workers,
+            "tokenizer_vocab_size": vocab_size,
+            "tokenizer_eos_id": eos_id,
+        }
+        with manifest_path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=True, sort_keys=True)
+
     def prepare_data(self) -> None:
         from litdata import optimize
         from litdata.streaming import TokensLoader
-
-        # Check if preprocessed data already exists
-        if Path(self.out_path_train).is_dir() and Path(self.out_path_val).is_dir():
-            print(f"\nSkipping data preprocessing: Found preprocessed data in {self.out_path_train} and {self.out_path_val}.\n")
-            return
 
         train_files = sorted(
             entry.path
@@ -80,12 +157,26 @@ class FixedTextFiles(DataModule):
             val_files, *train_files = train_files
             val_files = [val_files]
 
-        # Use the number of workers specified in the config
+        if self.tokenizer is not None:
+            validate_tokenizer(self.tokenizer)
+
+        train_signature = self._split_signature(train_files)
+        val_signature = self._split_signature(val_files)
+        train_up_to_date = self._split_is_up_to_date(Path(self.out_path_train), train_signature, train_files)
+        val_up_to_date = self._split_is_up_to_date(Path(self.out_path_val), val_signature, val_files)
+
+        if train_up_to_date and val_up_to_date:
+            print(f"\nSkipping data preprocessing: Up-to-date artifacts found in {self.out_path_train} and {self.out_path_val}.\n")
+            self._write_split_manifest(Path(self.out_path_train), train_signature, train_files)
+            self._write_split_manifest(Path(self.out_path_val), val_signature, val_files)
+            return
+
         use_workers = self.num_workers
-        if not Path(self.out_path_train).is_dir():
+        if not train_up_to_date:
+            if Path(self.out_path_train).is_dir():
+                print(f"Detected stale training artifacts in {self.out_path_train}, rebuilding...")
+                shutil.rmtree(self.out_path_train, ignore_errors=True)
             print(f"Processing training data using {use_workers} workers...")
-            if self.tokenizer is not None:
-                validate_tokenizer(self.tokenizer)
             optimize(
                 fn=partial(tokenize, tokenizer=self.tokenizer),
                 inputs=train_files,
@@ -94,18 +185,16 @@ class FixedTextFiles(DataModule):
                 chunk_bytes="50MB",
                 item_loader=TokensLoader(block_size=self.max_seq_length),
             )
+            self._write_split_manifest(Path(self.out_path_train), train_signature, train_files)
         else:
-            print(
-                f"\nWarning: Found preprocessed training data in {self.out_path_train}."
-                "Skipping reprocessing for efficiency. If your text input has changed since the last"
-                " `litgpt pretrain` command, please delete the preprocessed files to trigger"
-                f" reprocessing: `rm -rf {self.out_path_train}`\n"
-            )
-        use_workers = self.num_workers
-        if not Path(self.out_path_val).is_dir():
+            print(f"Training artifacts are current in {self.out_path_train}; skipping train rebuild.")
+            self._write_split_manifest(Path(self.out_path_train), train_signature, train_files)
+
+        if not val_up_to_date:
+            if Path(self.out_path_val).is_dir():
+                print(f"Detected stale validation artifacts in {self.out_path_val}, rebuilding...")
+                shutil.rmtree(self.out_path_val, ignore_errors=True)
             print(f"Processing validation data using {use_workers} workers...")
-            if self.tokenizer is not None:
-                validate_tokenizer(self.tokenizer)
             optimize(
                 fn=partial(tokenize, tokenizer=self.tokenizer),
                 inputs=val_files,
@@ -114,13 +203,10 @@ class FixedTextFiles(DataModule):
                 chunk_bytes="50MB",
                 item_loader=TokensLoader(block_size=self.max_seq_length),
             )
+            self._write_split_manifest(Path(self.out_path_val), val_signature, val_files)
         else:
-            print(
-                f"\nWarning: Found preprocessed validation data in {self.out_path_val}."
-                "Skipping reprocessing for efficiency. If your text input has changed since the last"
-                " `litgpt pretrain` command, please delete the preprocessed files to trigger"
-                f" reprocessing: `rm -rf {self.out_path_val}`\n"
-            )
+            print(f"Validation artifacts are current in {self.out_path_val}; skipping val rebuild.")
+            self._write_split_manifest(Path(self.out_path_val), val_signature, val_files)
 
     def train_dataloader(self) -> DataLoader:
         from litdata.streaming import StreamingDataLoader, StreamingDataset, TokensLoader

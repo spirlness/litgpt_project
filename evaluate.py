@@ -25,6 +25,20 @@ class TextDataset(Dataset):
         return x, y
 
 
+def _find_validation_bins(data_dir: Path) -> list[Path]:
+    candidates = [
+        data_dir / "val" / "val",
+        data_dir / "val",
+        data_dir,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            files = sorted(candidate.glob("*.bin"))
+            if files:
+                return files
+    return sorted(data_dir.rglob("*.bin"))
+
+
 def evaluate(
     checkpoint_dir: Path = Path("checkpoints"),
     data_dir: Path = Path("data/custom_text"),
@@ -99,63 +113,54 @@ def evaluate(
     model.to(device)
     model.eval()
 
-    val_data_dir = data_dir
-    # Check for bin files recursively
-    val_files = list(val_data_dir.rglob("*.bin"))
+    val_files = _find_validation_bins(data_dir)
 
     if not val_files:
-        print(f"No validation .bin files found in {val_data_dir}")
+        print(f"No validation .bin files found in {data_dir}")
         return
 
-    print(f"Found validation files: {[f.name for f in val_files]}")
-
-    # Check total length first
-    temp_data = np.memmap(val_files[0], dtype=np.uint16, mode="r")
-    total_len = len(temp_data)
-    del temp_data
-
-    if total_len < 2:
-        print(f"Validation data too small: {total_len} tokens")
-        return
-
-    # Some smoke-test datasets can be shorter than the model context length.
-    block_size = min(config.block_size, total_len - 1)
-
-    print(f"Validation data size: {total_len} tokens")
-
-    dataset = TextDataset(val_files[0], block_size=block_size)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=num_workers > 0,
-        drop_last=False
-    )
-
+    print(f"Found validation shards: {[f.name for f in val_files]}")
     losses = []
     print("Starting evaluation...")
 
-    data_iter = iter(dataloader)
-
+    total_batches = 0
     with torch.no_grad():
-        for i in range(max_batches):
-            try:
-                x, y = next(data_iter)
-            except StopIteration:
-                data_iter = iter(dataloader)
-                x, y = next(data_iter)
+        for shard in val_files:
+            shard_data = np.memmap(shard, dtype=np.uint16, mode="r")
+            total_len = len(shard_data)
+            del shard_data
+            if total_len < 2:
+                print(f"Skipping tiny shard {shard.name}: {total_len} tokens")
+                continue
 
-            x, y = x.to(device), y.to(device)
+            block_size = min(config.block_size, total_len - 1)
+            dataset = TextDataset(shard, block_size=block_size)
+            dataloader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                pin_memory=True,
+                persistent_workers=num_workers > 0,
+                drop_last=False,
+            )
 
-            logits = model(x)
+            for x, y in dataloader:
+                x, y = x.to(device), y.to(device)
+                logits = model(x)
+                loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+                losses.append(loss.item())
+                total_batches += 1
+                if total_batches % 10 == 0:
+                    print(f"Batch {total_batches}, Current Loss: {loss.item():.4f}")
+                if max_batches > 0 and total_batches >= max_batches:
+                    break
+            if max_batches > 0 and total_batches >= max_batches:
+                break
 
-            loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
-            losses.append(loss.item())
-
-            if (i + 1) % 10 == 0:
-                print(f"Batch {i + 1}/{max_batches}, Current Loss: {loss.item():.4f}")
+    if not losses:
+        print("No valid validation batches were produced.")
+        return
 
     avg_loss = sum(losses) / len(losses)
     perplexity = torch.exp(torch.tensor(avg_loss)).item()

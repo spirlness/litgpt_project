@@ -8,9 +8,6 @@ try:
 except ImportError:
     torch_xla = None
 
-os.environ.setdefault("NCCL_P2P_DISABLE", "1")
-os.environ.setdefault("NCCL_IB_DISABLE", "1")
-os.environ.setdefault("NCCL_SHM_DISABLE", "1")
 os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING", "1")
 os.environ.setdefault("NCCL_DEBUG", "WARN")
 
@@ -19,7 +16,7 @@ import concurrent.futures
 import importlib
 import time
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import lightning as L
 import torch
@@ -34,6 +31,7 @@ from src.litgpt_moe.utils import (
     apply_runtime_config,
     configure_flash_attention,
     apply_gradient_checkpointing,
+    validate as validate_loop,
     verify_flash_attention,
 )
 
@@ -55,8 +53,16 @@ def _shutdown_upload_executor() -> None:
         _UPLOAD_EXECUTOR = None
 
 
-def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: Path) -> None:
+def _upload_and_cleanup(
+    checkpoint_dir: Path,
+    repo_id: str,
+    step: int,
+    out_dir: Path,
+    *,
+    keep_last_local: int = 2,
+) -> None:
     # Upload to Hugging Face Hub (Automatic Backup)
+    uploaded = False
     try:
         from huggingface_hub import HfApi
 
@@ -71,26 +77,25 @@ def _upload_and_cleanup(checkpoint_dir: Path, repo_id: str, step: int, out_dir: 
             commit_message=f"Upload checkpoint step {step}",
         )
         print(f"Successfully uploaded step {step} to Hugging Face Hub")
+        uploaded = True
     except Exception as e:
         print(f"Failed to upload checkpoint to Hugging Face Hub: {e}")
         print("Continuing training despite upload failure...")
+        return
 
     import shutil
 
-    # Async cleanup: Only delete checkpoints that are superseded by a newer one.
-    # This avoids race conditions where a queued task deletes a newer checkpoint that hasn't been uploaded yet.
-    all_checkpoints = out_dir.glob("step-*")
+    if not uploaded:
+        return
 
-    for checkpoint in all_checkpoints:
-        # Delete if it's older than the current one being processed (stale/abandoned).
-        # We only delete checkpoints that are strictly older than the one we just uploaded.
-        # This ensures we don't delete the current checkpoint if a newer one is being created but not yet finished/queued.
-        if checkpoint.name < checkpoint_dir.name:
-            if checkpoint.is_dir():
-                try:
-                    shutil.rmtree(checkpoint)
-                except Exception as e:
-                    print(f"Failed to remove old checkpoint {checkpoint}: {e}")
+    keep_last_local = max(int(keep_last_local), 1)
+    step_dirs = sorted(path for path in out_dir.glob("step-*") if path.is_dir())
+    stale_dirs = step_dirs[:-keep_last_local]
+    for checkpoint in stale_dirs:
+        try:
+            shutil.rmtree(checkpoint)
+        except Exception as e:
+            print(f"Failed to remove old checkpoint {checkpoint}: {e}")
 
 
 def load_yaml(path: Path) -> dict:
@@ -102,6 +107,38 @@ def resolve_class(path: str):
     module_name, class_name = path.rsplit(".", 1)
     module = importlib.import_module(module_name)
     return getattr(module, class_name)
+
+
+def build_data_module(data_cfg: dict, *, train_data_path: Path, val_data_path: Path | None, num_workers: int):
+    class_path = data_cfg.get("class_path")
+    init_args = dict(data_cfg.get("init_args", {}))
+    init_args["train_data_path"] = train_data_path
+    init_args["val_data_path"] = val_data_path
+    init_args["num_workers"] = num_workers
+
+    if not class_path or class_path == "src.litgpt_moe.fixed_text_files.FixedTextFiles":
+        data_cls = FixedTextFiles
+    else:
+        data_cls = resolve_class(class_path)
+    return data_cls(**init_args)
+
+
+def _write_checkpoint_metadata(
+    checkpoint_dir: Path,
+    *,
+    model_config: dict[str, Any] | None = None,
+    train_config: dict[str, Any] | None = None,
+    tokenizer_dir: Path | None = None,
+) -> None:
+    if model_config is not None:
+        with (checkpoint_dir / "model_config.yaml").open("w", encoding="utf-8") as f:
+            yaml.safe_dump({"model_config": model_config}, f, sort_keys=False)
+    if train_config is not None or tokenizer_dir is not None:
+        metadata = {"train_config": train_config or {}}
+        if tokenizer_dir is not None:
+            metadata["tokenizer_dir"] = str(tokenizer_dir)
+        with (checkpoint_dir / "training_metadata.yaml").open("w", encoding="utf-8") as f:
+            yaml.safe_dump(metadata, f, sort_keys=False)
 
 
 def build_optimizer(model: torch.nn.Module, optimizer_cfg: dict) -> torch.optim.Optimizer:
@@ -176,10 +213,20 @@ def save_checkpoint(
     *,
     upload_to_hf: bool = False,
     hf_repo_id: str | None = None,
+    keep_last_local: int = 2,
+    model_config: dict[str, Any] | None = None,
+    train_config: dict[str, Any] | None = None,
+    tokenizer_dir: Path | None = None,
 ):
     checkpoint_dir = out_dir / f"step-{step:08d}"
     if fabric.is_global_zero:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        _write_checkpoint_metadata(
+            checkpoint_dir,
+            model_config=model_config,
+            train_config=train_config,
+            tokenizer_dir=tokenizer_dir,
+        )
     fabric.barrier()
     fabric.save(
         checkpoint_dir / "lit_model.pth",
@@ -195,7 +242,14 @@ def save_checkpoint(
         if not hf_repo_id:
             fabric.print("Skipping HF upload: `upload_to_hf` is enabled but no `hf_repo_id` is configured.")
         else:
-            _get_upload_executor().submit(_upload_and_cleanup, checkpoint_dir, hf_repo_id, step, out_dir)
+            _get_upload_executor().submit(
+                _upload_and_cleanup,
+                checkpoint_dir,
+                hf_repo_id,
+                step,
+                out_dir,
+                keep_last_local=keep_last_local,
+            )
 
 
 def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) -> None:
@@ -258,12 +312,14 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     # patch_flops_measurement() # Not imported and seemingly undefined
 
     train_section = train_cfg.get("train", {})
+    eval_section = train_cfg.get("eval", {})
     checkpointing_cfg = train_cfg.get("checkpointing", {})
     data_section = train_cfg.get("data", {})
     optimizer_section = train_cfg.get("optimizer", {})
     grad_checkpointing = bool(train_section.get("gradient_checkpointing", False))
     upload_to_hf = bool(checkpointing_cfg.get("upload_to_hf", False))
     hf_repo_id = checkpointing_cfg.get("hf_repo_id") or os.environ.get("HF_REPO_ID")
+    keep_last_local = int(checkpointing_cfg.get("keep_last_local", 2))
 
     fabric = L.Fabric(
         strategy=train_cfg.get("strategy", "ddp"),
@@ -297,6 +353,7 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     # Use MoEConfig directly, which handles moe_args via inheritance if passed in model_cfg
     # We re-merge moe_args back into model_cfg if they were popped, or just pass model_cfg if it contains them
     model_cfg.update(moe_args)
+    model_cfg_for_ckpt = dict(model_cfg)
     config = MoEConfig(**model_cfg)
 
     model = GPT(config)
@@ -335,9 +392,10 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
     num_workers = int(data_section.get("init_args", {}).get("num_workers", 2))
 
     if train_data_path is None:
-        raise ValueError("train_data_path is required in configs/kaggle_t4_ddp.yaml")
+        raise ValueError("train_data_path is required in train config data.init_args.train_data_path")
 
-    data = FixedTextFiles(
+    data = build_data_module(
+        data_section,
         train_data_path=Path(train_data_path),
         val_data_path=Path(val_data_path) if val_data_path else None,
         num_workers=num_workers,
@@ -355,6 +413,13 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
 
     train_dataloader = data.train_dataloader()
     train_dataloader = fabric.setup_dataloaders(train_dataloader)
+    eval_interval = int(eval_section.get("interval", 0))
+    final_validation = bool(eval_section.get("final_validation", False))
+    eval_max_iters = int(eval_section.get("max_iters", 20))
+    val_dataloader = None
+    if eval_interval > 0 or final_validation:
+        val_dataloader = data.val_dataloader()
+        val_dataloader = fabric.setup_dataloaders(val_dataloader)
 
     world_size = fabric.world_size
     denom = micro_batch_size * world_size
@@ -479,10 +544,36 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
                 optimizer,
                 upload_to_hf=upload_to_hf,
                 hf_repo_id=hf_repo_id,
+                keep_last_local=keep_last_local,
+                model_config=model_cfg_for_ckpt,
+                train_config=train_cfg,
+                tokenizer_dir=tokenizer_dir,
             )
+
+        if val_dataloader is not None and eval_interval > 0 and global_step % eval_interval == 0:
+            val_loss = validate_loop(
+                fabric=fabric,
+                model=model,
+                val_dataloader=val_dataloader,
+                max_iters=eval_max_iters,
+                verbose=True,
+            )
+            val_loss = cast(torch.Tensor, fabric.all_reduce(val_loss, reduce_op="mean"))
+            fabric.print(f"step={global_step} val_loss={val_loss.item():.4f}")
 
         if max_tokens > 0 and total_tokens >= max_tokens:
             break
+
+    if val_dataloader is not None and final_validation:
+        val_loss = validate_loop(
+            fabric=fabric,
+            model=model,
+            val_dataloader=val_dataloader,
+            max_iters=eval_max_iters,
+            verbose=True,
+        )
+        val_loss = cast(torch.Tensor, fabric.all_reduce(val_loss, reduce_op="mean"))
+        fabric.print(f"final_val_loss={val_loss.item():.4f}")
 
     save_checkpoint(
         fabric,
@@ -493,6 +584,10 @@ def train(model_cfg_path: Path, train_cfg_path: Path, args: argparse.Namespace) 
         optimizer,
         upload_to_hf=upload_to_hf,
         hf_repo_id=hf_repo_id,
+        keep_last_local=keep_last_local,
+        model_config=model_cfg_for_ckpt,
+        train_config=train_cfg,
+        tokenizer_dir=tokenizer_dir,
     )
     _shutdown_upload_executor()
     if fabric.device.type == "cuda":

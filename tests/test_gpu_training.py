@@ -300,9 +300,9 @@ class TestMemoryOptimization:
             model = GPT(config).cuda().train()
 
             if use_checkpointing:
-                from src.utils import patch_gradient_checkpointing
+                from src.litgpt_moe.utils import apply_gradient_checkpointing
 
-                patch_gradient_checkpointing()
+                apply_gradient_checkpointing(model)
 
             optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
