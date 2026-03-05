@@ -33,8 +33,28 @@ class FixedTextFiles(DataModule):
     If None, verification data will be split from the training set."""
     seed: int = 42
     """Random seed for shuffling the dataset."""
-    num_workers: int = 2  # Force usage of fewer workers
+    num_workers: int = 2
     """Number of workers for data loading."""
+    prepare_num_workers: Optional[int] = None
+    """Number of workers for preprocessing. Defaults to max(1, num_workers)."""
+    pin_memory: bool = True
+    """Enable pin_memory for CUDA training."""
+    prefetch_factor: Optional[int] = 2
+    """Number of prefetched batches per worker when num_workers > 0."""
+    persistent_workers: bool = True
+    """Keep worker processes alive between epochs when num_workers > 0."""
+    train_shuffle: bool = True
+    """Whether to shuffle train stream."""
+    val_shuffle: bool = False
+    """Whether to shuffle val stream."""
+    train_drop_last: bool = True
+    """Drop incomplete train batch."""
+    val_drop_last: bool = False
+    """Keep incomplete val batch."""
+    max_cache_size: str = "100GB"
+    """Streaming dataset cache size."""
+    max_pre_download: int = 2
+    """How many chunks to pre-download in streaming dataset."""
 
     tokenizer: Optional[Tokenizer] = field(default=None, init=False, repr=False)
     batch_size: int = field(default=1, init=False, repr=False)
@@ -105,6 +125,49 @@ class FixedTextFiles(DataModule):
         output_latest = self._latest_mtime_ns([p for p in output_dir.rglob("*") if p.is_file()])
         return output_latest > 0 and source_latest > 0 and output_latest >= source_latest
 
+    @staticmethod
+    def _list_txt_files(data_dir: Path) -> list[str]:
+        return sorted(
+            entry.path
+            for entry in os.scandir(data_dir)
+            if entry.is_file() and entry.name.endswith(".txt")
+        )
+
+    def _effective_prepare_workers(self) -> int:
+        if self.prepare_num_workers is not None:
+            return max(int(self.prepare_num_workers), 1)
+        return max(int(self.num_workers), 1)
+
+    def _build_streaming_dataset(self, input_dir: Path, *, shuffle: bool, drop_last: bool):
+        from litdata.streaming import StreamingDataset, TokensLoader
+
+        return StreamingDataset(
+            input_dir=str(input_dir),
+            item_loader=TokensLoader(block_size=self.max_seq_length),
+            shuffle=shuffle,
+            drop_last=drop_last,
+            seed=self.seed,
+            max_cache_size=self.max_cache_size,
+            max_pre_download=self.max_pre_download,
+        )
+
+    def _build_streaming_dataloader(self, dataset, *, drop_last: bool, collate_fn):
+        from litdata.streaming import StreamingDataLoader
+
+        worker_count = max(int(self.num_workers), 0)
+        kwargs = {
+            "batch_size": self.batch_size,
+            "pin_memory": bool(self.pin_memory and torch.cuda.is_available()),
+            "num_workers": worker_count,
+            "drop_last": drop_last,
+            "collate_fn": collate_fn,
+        }
+        if worker_count > 0:
+            kwargs["persistent_workers"] = self.persistent_workers
+            if self.prefetch_factor is not None:
+                kwargs["prefetch_factor"] = max(int(self.prefetch_factor), 1)
+        return StreamingDataLoader(dataset, **kwargs)
+
     def _write_split_manifest(self, output_dir: Path, signature: str, source_files: list[str]) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = self._manifest_path(output_dir)
@@ -136,20 +199,12 @@ class FixedTextFiles(DataModule):
         from litdata import optimize
         from litdata.streaming import TokensLoader
 
-        train_files = sorted(
-            entry.path
-            for entry in os.scandir(self.train_data_path)
-            if entry.name.endswith(".txt")
-        )
+        train_files = self._list_txt_files(self.train_data_path)
         assert len(train_files) > 0, f"No .txt files found in training data {self.train_data_path}"
 
         if self.val_data_path is not None:
             self.val_data_path = Path(self.val_data_path)
-            val_files = sorted(
-                entry.path
-                for entry in os.scandir(self.val_data_path)
-                if entry.name.endswith(".txt")
-            )
+            val_files = self._list_txt_files(self.val_data_path)
             assert len(val_files) > 0, f"No .txt files found in validation data {self.val_data_path}"
         # Train/Test split. Use chunk 0 as test split, rest as training
         else:
@@ -171,7 +226,7 @@ class FixedTextFiles(DataModule):
             self._write_split_manifest(Path(self.out_path_val), val_signature, val_files)
             return
 
-        use_workers = self.num_workers
+        use_workers = self._effective_prepare_workers()
         if not train_up_to_date:
             if Path(self.out_path_train).is_dir():
                 print(f"Detected stale training artifacts in {self.out_path_train}, rebuilding...")
@@ -209,12 +264,10 @@ class FixedTextFiles(DataModule):
             self._write_split_manifest(Path(self.out_path_val), val_signature, val_files)
 
     def train_dataloader(self) -> DataLoader:
-        from litdata.streaming import StreamingDataLoader, StreamingDataset, TokensLoader
-
-        train_dataset = StreamingDataset(
-            input_dir=str(self.out_path_train),
-            item_loader=TokensLoader(block_size=self.max_seq_length),
-            shuffle=True,
+        train_dataset = self._build_streaming_dataset(
+            Path(self.out_path_train),
+            shuffle=self.train_shuffle,
+            drop_last=self.train_drop_last,
         )
 
         pad_id = int(self.tokenizer.eos_id) if self.tokenizer is not None and self.tokenizer.eos_id is not None else 0
@@ -224,23 +277,17 @@ class FixedTextFiles(DataModule):
             max_seq_length=self.max_seq_length,
             pad_id=pad_id,
         )
-        train_dataloader = StreamingDataLoader(
+        return self._build_streaming_dataloader(
             train_dataset,
-            batch_size=self.batch_size,
-            pin_memory=True,
-            num_workers=self.num_workers,
-            drop_last=True,
+            drop_last=self.train_drop_last,
             collate_fn=collate_fn,
         )
-        return train_dataloader
 
     def val_dataloader(self) -> DataLoader:
-        from litdata.streaming import StreamingDataLoader, StreamingDataset, TokensLoader
-
-        val_dataset = StreamingDataset(
-            input_dir=str(self.out_path_val),
-            item_loader=TokensLoader(block_size=self.max_seq_length),
-            shuffle=True,
+        val_dataset = self._build_streaming_dataset(
+            Path(self.out_path_val),
+            shuffle=self.val_shuffle,
+            drop_last=self.val_drop_last,
         )
         pad_id = int(self.tokenizer.eos_id) if self.tokenizer is not None and self.tokenizer.eos_id is not None else 0
         collate_fn = partial(
@@ -249,15 +296,11 @@ class FixedTextFiles(DataModule):
             max_seq_length=self.max_seq_length,
             pad_id=pad_id,
         )
-        val_dataloader = StreamingDataLoader(
+        return self._build_streaming_dataloader(
             val_dataset,
-            batch_size=self.batch_size,
-            pin_memory=True,
-            num_workers=self.num_workers,
-            drop_last=True,
+            drop_last=self.val_drop_last,
             collate_fn=collate_fn,
         )
-        return val_dataloader
 
 
 def tokenize(filename: str, tokenizer: Optional[Tokenizer]):

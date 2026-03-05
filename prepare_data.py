@@ -1,200 +1,124 @@
 import argparse
-import os
 from pathlib import Path
 
 import requests
 import yaml
+from litgpt.tokenizer import Tokenizer
 
-log_dataset_to_wandb = None
-HAS_WANDB_DATASET = False
+from src.litgpt_moe.fixed_text_files import FixedTextFiles
 
-try:
-    import src.litgpt_moe.wandb_dataset as wandb_dataset  # type: ignore
-
-    log_dataset_to_wandb = wandb_dataset.log_dataset_to_wandb
-    HAS_WANDB_DATASET = True
-except ImportError:
-    pass
+DEFAULT_TOKENIZER_REPO = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+DEFAULT_MODEL_CONFIG = Path("configs/moe_200m.yaml")
 
 
-def _ensure_data_directories(data_path: Path) -> None:
-    data_path.mkdir(parents=True, exist_ok=True)
-    (data_path / "train").mkdir(parents=True, exist_ok=True)
-    (data_path / "val").mkdir(parents=True, exist_ok=True)
+def _ensure_data_directories(data_dir: Path) -> None:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "train").mkdir(parents=True, exist_ok=True)
+    (data_dir / "val").mkdir(parents=True, exist_ok=True)
 
 
-# Set environment variables for data processing
-os.environ["DATA_OPTIMIZER_GLOBAL_RANK"] = "0"
-os.environ["DATA_OPTIMIZER_NUM_WORKERS"] = str(os.cpu_count() or 1)
+def _download_if_missing(url: str, output_path: Path, timeout: int) -> bool:
+    if output_path.exists() and output_path.stat().st_size > 0:
+        return False
+    response = requests.get(url, stream=True, timeout=timeout)
+    response.raise_for_status()
+    with output_path.open("wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
+    return True
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare tokenized dataset for LitGPT TextFiles")
-    parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=Path("data/custom_text"),
-        help="Dataset root directory (will contain train/ and val/)",
-    )
-    parser.add_argument(
-        "--wandb-project",
-        type=str,
-        default=os.environ.get("WANDB_PROJECT"),
-        help="If set, upload dataset as a W&B Artifact to this project",
-    )
-    parser.add_argument(
-        "--wandb-entity",
-        type=str,
-        default=os.environ.get("WANDB_ENTITY"),
-        help="Optional W&B entity/team",
-    )
-    parser.add_argument(
-        "--wandb-artifact",
-        type=str,
-        default=os.environ.get("WANDB_DATA_ARTIFACT", "dataset-custom_text"),
-        help="W&B artifact name (no spaces)",
-    )
-    parser.add_argument(
-        "--wandb-alias",
-        action="append",
-        default=os.environ.get("WANDB_DATA_ALIASES", "latest").split(",")
-        if os.environ.get("WANDB_DATA_ALIASES")
-        else ["latest"],
-        help="Artifact alias (repeatable). Default: latest",
-    )
-    parser.add_argument(
-        "--wandb-tag",
-        action="append",
-        default=os.environ.get("WANDB_TAGS", "").split(",") if os.environ.get("WANDB_TAGS") else [],
-        help="Run tag (repeatable)",
-    )
-    parser.add_argument(
-        "--wandb-run-name",
-        type=str,
-        default=os.environ.get("WANDB_RUN_NAME"),
-        help="Optional W&B run name",
-    )
-    parser.add_argument(
-        "--log-to-wandb",
-        action="store_true",
-        default=bool(os.environ.get("WANDB_LOG_DATASET")),
-        help="Enable dataset upload to W&B (or set WANDB_LOG_DATASET=1)",
-    )
-    args = parser.parse_args()
 
-    # Load model config
-    with open("configs/moe_200m.yaml", "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
-    print(f"Model config: {config['name']}")
-    print(f"Vocab size: {config['padded_vocab_size']}")
-    print(f"Context length: {config['block_size']}")
-    print(f"MoE experts: {config['n_expert']}, active per token: {config['n_expert_per_token']}")
-
-    # Import LitGPT components
-    from litgpt.data import TextFiles
-    from litgpt.tokenizer import Tokenizer
-
-    # Download and prepare tokenizer first
-    tokenizer_dir = Path("data/tokenizer")
+def _ensure_tokenizer(tokenizer_dir: Path, tokenizer_repo: str, timeout: int) -> None:
     tokenizer_dir.mkdir(parents=True, exist_ok=True)
+    base_url = f"https://huggingface.co/{tokenizer_repo}/resolve/main"
+    files = ("tokenizer.json", "tokenizer_config.json")
+    downloaded = []
+    for file_name in files:
+        url = f"{base_url}/{file_name}"
+        target = tokenizer_dir / file_name
+        did_download = _download_if_missing(url, target, timeout=timeout)
+        downloaded.append((file_name, did_download))
 
-    # Use TinyLlama tokenizer (has BOS)
-    tokenizer_url = "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer.json"
-    tokenizer_config_url = "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer_config.json"
+    for file_name, did_download in downloaded:
+        status = "downloaded" if did_download else "cached"
+        print(f"Tokenizer file {file_name}: {status}")
 
-    tokenizer_path = tokenizer_dir / "tokenizer.json"
-    config_path = tokenizer_dir / "tokenizer_config.json"
 
-    # Download tokenizer files if missing
-    print(f"Downloading TinyLlama tokenizer to {tokenizer_dir}...")
-    if not tokenizer_path.exists():
-        print("Downloading tokenizer.json...")
-        response = requests.get(tokenizer_url, stream=True)
-        response.raise_for_status()
-        with open(tokenizer_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+def _load_model_config(model_config_path: Path) -> dict:
+    with model_config_path.open("r", encoding="utf-8") as f:
+        loaded = yaml.safe_load(f) or {}
+    if "model_config" in loaded:
+        loaded = loaded["model_config"]
+    return loaded
 
-    if not config_path.exists():
-        print("Downloading tokenizer_config.json...")
-        response = requests.get(tokenizer_config_url, stream=True)
-        response.raise_for_status()
-        with open(config_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
 
-    print("Tokenizer download complete!")
+def _resolve_max_seq_length(model_config: dict, override: int | None) -> int:
+    if override is not None:
+        return max(int(override), 1)
+    block_size = int(model_config.get("block_size", 2048))
+    return max(block_size - 1, 1)
 
-    # Create tokenizer
-    print("Creating tokenizer...")
-    tokenizer = Tokenizer(tokenizer_dir)
 
-    # Print vocab size info
+def _count_txt_files(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for p in path.iterdir() if p.is_file() and p.suffix == ".txt")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Prepare tokenized dataset for LitGPT MoE training")
+    parser.add_argument("--data-dir", type=Path, default=Path("data/custom_text"))
+    parser.add_argument("--model-config", type=Path, default=DEFAULT_MODEL_CONFIG)
+    parser.add_argument("--tokenizer-dir", type=Path, default=Path("data/tokenizer"))
+    parser.add_argument("--tokenizer-repo", type=str, default=DEFAULT_TOKENIZER_REPO)
+    parser.add_argument("--download-timeout", type=int, default=30)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--max-seq-length", type=int, default=None)
+    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--prepare-num-workers", type=int, default=None)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+
+    _ensure_data_directories(args.data_dir)
+    train_data_path = args.data_dir / "train"
+    val_dir = args.data_dir / "val"
+    val_data_path = val_dir if _count_txt_files(val_dir) > 0 else None
+
+    model_config = _load_model_config(args.model_config)
+    max_seq_length = _resolve_max_seq_length(model_config, args.max_seq_length)
+
+    print(f"Model config: {model_config.get('name', 'unknown')}")
+    print(f"Tokenizer repo: {args.tokenizer_repo}")
+    print(f"Data dir: {args.data_dir}")
+    print(f"Train .txt files: {_count_txt_files(train_data_path)}")
+    print(f"Val .txt files: {_count_txt_files(val_dir)}")
+    print(f"Target max_seq_length: {max_seq_length}")
+
+    _ensure_tokenizer(args.tokenizer_dir, args.tokenizer_repo, timeout=max(int(args.download_timeout), 1))
+    tokenizer = Tokenizer(args.tokenizer_dir)
     print(f"Tokenizer vocab size: {tokenizer.vocab_size}")
 
-    # Initialize TextFiles data module
-    data_path = args.data_dir
-    _ensure_data_directories(data_path)
-    data_module = TextFiles(
-        train_data_path=data_path / "train",
-        val_data_path=data_path / "val",
-        num_workers=os.cpu_count() or 1,
+    data_module = FixedTextFiles(
+        train_data_path=train_data_path,
+        val_data_path=val_data_path,
+        num_workers=max(int(args.num_workers), 0),
+        prepare_num_workers=args.prepare_num_workers,
+    )
+    data_module.connect(
+        tokenizer=tokenizer,
+        batch_size=max(int(args.batch_size), 1),
+        max_seq_length=max_seq_length,
     )
 
-    # Connect with tokenizer and batch size
-    data_module.connect(tokenizer=tokenizer, batch_size=8, max_seq_length=2047)
-
-    # Prepare data (downloads and tokenizes)
     print("\nPreparing tokenized data...")
-    print(f"Data will be saved to: {data_path}")
-    print("This may take a while...")
     data_module.prepare_data()
+    print("\nData preparation complete")
+    print(f"Training data path: {data_module.out_path_train}")
+    print(f"Validation data path: {data_module.out_path_val}")
 
-    print("\n" + "=" * 60)
-    print("Data preparation complete!")
 
-    print(f"Training data: {data_module.out_path_train}")
-    print(f"Validation data: {data_module.out_path_val}")
-    print("=" * 60)
-
-    # 验证生成的index.json文件
-    print("\nVerifying generated index.json files...")
-    try:
-        from scripts.generate_index_json import verify_index_json
-
-        if verify_index_json(data_module.out_path_train):
-            print("✓ Training data index.json verified")
-        else:
-            print("⚠ Regenerating training data index.json...")
-            from scripts.generate_index_json import generate_index_json
-
-            generate_index_json(data_module.out_path_train, "train", 1000)
-
-        if verify_index_json(data_module.out_path_val):
-            print("✓ Validation data index.json verified")
-        else:
-            print("⚠ Regenerating validation data index.json...")
-            from scripts.generate_index_json import generate_index_json
-
-            generate_index_json(data_module.out_path_val, "val", 200)
-    except Exception as e:
-        print(f"Warning: Could not verify index.json files: {e}")
-        print("This may not affect training if files were generated correctly.")
-
-    if args.log_to_wandb:
-        if not HAS_WANDB_DATASET:
-            print("Warning: wandb_dataset module not found. Skipping W&B upload.")
-        elif not args.wandb_project:
-            raise SystemExit("--log-to-wandb requires wandb_dataset module and --wandb-project or WANDB_PROJECT")
-        elif log_dataset_to_wandb is not None:
-            print("\nUploading dataset to Weights & Biases as an Artifact...")
-            log_dataset_to_wandb(
-                data_dir=data_path,
-                project=args.wandb_project,
-                entity=args.wandb_entity,
-                artifact_name=args.wandb_artifact,
-                aliases=[a for a in args.wandb_alias if a],
-                tags=[t for t in args.wandb_tag if t],
-                run_name=args.wandb_run_name,
-            )
-            print("W&B dataset Artifact upload complete.")
+if __name__ == "__main__":
+    main()
