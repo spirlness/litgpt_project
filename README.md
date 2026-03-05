@@ -26,21 +26,43 @@ uv run python prepare_data.py --data-dir data/custom_text
 - `run_train.py --model-config configs/moe_200m.yaml`
 - `run_train.py --train-config configs/kaggle_t4_ddp.yaml`
 
-单卡本地训练示例：
+默认入口运行：
 
 ```bash
-uv run python run_train.py \
-  --model-config configs/moe_200m.yaml \
-  --train-config configs/optimized_rtx3060.yaml
+uv run python run_train.py
 ```
 
-快速小模型调试：
+0.3B MoE（RTX 3060 6GB，推荐 fit6gb）：
 
 ```bash
+# 0) 先做环境检查（必须在项目目录运行）
+uv run python scripts/env_sanity_check.py
+
+# 1) 下载 TinyStories（默认 10k train / 2k val）
+uv run python scripts/download_tinystories.py
+
+# 2) 预处理到 LitGPT TextFiles 目录
+uv run python prepare_data.py --data-dir data/custom_text
+
+# 3) 先跑 fit6gb smoke（20k tokens, seq=256）
+HF_TOKEN=your_hf_token \
+HF_REPO_ID=your-username/your-model-repo \
 uv run python run_train.py \
-  --model-config configs/moe_30m_debug.yaml \
-  --train-config configs/optimized_rtx3060.yaml
+  --model-config configs/moe_300m_fit6gb.yaml \
+  --train-config configs/local_rtx3060_moe300_fit6gb_smoke.yaml
+
+# 4) smoke 稳定后跑 fit6gb baseline（10M tokens, seq=256）
+HF_TOKEN=your_hf_token \
+HF_REPO_ID=your-username/your-model-repo \
+uv run python run_train.py \
+  --model-config configs/moe_300m_fit6gb.yaml \
+  --train-config configs/local_rtx3060_moe300_fit6gb_baseline.yaml
 ```
+
+说明：
+- `HF_REPO_ID` 通过环境变量传入，训练配置中不会写死仓库名。
+- 建议始终用 `uv run`（或 `.venv/bin/python`）执行，避免系统 Python 导入路径污染。
+- 如果 baseline 仍遇到 OOM，先把 `global_batch_size` 从 `8` 降到 `4`。
 
 ### 4. 生成与评估
 
@@ -66,9 +88,6 @@ uv run python evaluate.py --checkpoint-dir checkpoints
 
 注意：
 - 在当前 `run_train.py` 中，**MoE 模型默认禁用 `torch.compile`**（已知兼容性保护逻辑）。
-- 如需验证 Flash Attention + compile 同时生效，可使用 dense smoke 配置：
-  - `configs/dense_compile_flash_smoke_model.yaml`
-  - `configs/dense_compile_flash_smoke_train.yaml`
 
 ## Hugging Face 自动上传检查点
 

@@ -1,4 +1,5 @@
-out_dir: ./checkpoints/bench_medium_adam
+# RTX 3060 (6GB) baseline run for MoE-300M-Fit6GB
+out_dir: ./checkpoints_moe300_fit6gb
 precision: 16-mixed
 tokenizer_dir: ./data/tokenizer
 
@@ -14,24 +15,25 @@ data:
     num_workers: 0
 
 train:
-  global_batch_size: 4
-  log_interval: 1
-  max_tokens: 12288
-  lr_warmup_steps: 2
+  global_batch_size: 8
   micro_batch_size: 1
-  save_interval: 0
+  log_interval: 10
+  max_tokens: 10000000
+  lr_warmup_steps: 100
+  save_interval: 1000
   gradient_checkpointing: true
   max_norm: 1.0
   max_seq_length: 256
 
 eval:
-  interval: 0
+  interval: 1000
   final_validation: false
 
-resume: null
+resume: auto
 
 checkpointing:
-  upload_to_hf: false
+  upload_to_hf: true
+  # hf_repo_id: set via HF_REPO_ID environment variable
 
 optimization:
   compile: false
@@ -39,13 +41,18 @@ optimization:
   compile_dynamic: false
   compile_fullgraph: false
   flash_attention: true
-  flash_attention_force: true
+  flash_attention_force: false
   disable_math_fallback: false
 
 logger_name: csv
 
 optimizer:
-  class_path: torch.optim.AdamW
+  class_path: muon.MuonWithAuxAdam
   init_args:
-    lr: 0.0003
-    weight_decay: 0.01
+    muon_lr: 0.01
+    muon_momentum: 0.95
+    muon_weight_decay: 0.01
+    adam_lr: 0.0003
+    adam_betas: [0.9, 0.95]
+    adam_eps: 1.0e-8
+    adam_weight_decay: 0.01

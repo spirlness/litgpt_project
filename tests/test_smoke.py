@@ -15,10 +15,11 @@ CI = os.environ.get("CI", "").lower() in {"1", "true", "yes"}
 
 def test_configs_parse() -> None:
     paths = [
-        Path("configs/moe_30m_debug.yaml"),
         Path("configs/moe_200m.yaml"),
-        Path("configs/moe_400m.yaml"),
         Path("configs/kaggle_t4_ddp.yaml"),
+        Path("configs/moe_300m_fit6gb.yaml"),
+        Path("configs/local_rtx3060_moe300_fit6gb_smoke.yaml"),
+        Path("configs/local_rtx3060_moe300_fit6gb_baseline.yaml"),
     ]
     for path in paths:
         assert path.exists(), f"Missing config: {path}"
